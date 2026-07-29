@@ -33,6 +33,8 @@ def write_summary(fits: pd.DataFrame, fits_for_stage2: pd.DataFrame,
       f"{screening_counts['n_monotonicity_violation']}")
     w(f"    excluded (insufficient interior points): "
       f"{screening_counts['n_insufficient_interior_points']}")
+    w(f"    excluded (curve_fit optimizer failure): "
+      f"{screening_counts['n_fit_failed']}")
     w(f"    excluded (bound-contact fit, kept in fits.csv): "
       f"{screening_counts['n_bound_contact']}")
     w(f"    clean, used for joint-distribution modeling: "
@@ -50,10 +52,12 @@ def write_summary(fits: pd.DataFrame, fits_for_stage2: pd.DataFrame,
         clean_ct = fits_for_stage2[fits_for_stage2["cost_type"] == ct]
         n_total = len(all_ct)
         n_insufficient = int((all_ct["status"] == "insufficient_points").sum())
+        n_failed = int((all_ct["status"] == "fit_failed").sum())
         n_bound = int(((all_ct["status"] == "fit") & (all_ct["at_bound"])).sum())
         n_used = len(clean_ct)
         w(f"  {ct}: {n_total} total fit attempts; "
           f"{n_insufficient} excluded (insufficient points); "
+          f"{n_failed} excluded (fit failed); "
           f"{n_bound} excluded (bound contact); "
           f"{n_used} used for joint-distribution modeling")
         if n_used:

@@ -177,6 +177,14 @@ def build_screening_report(
                        f"< MIN_INTERIOR_POINTS={config.MIN_INTERIOR_POINTS}",
                 included_in_stage2=False, fit_r2=np.nan, fit_rmse=np.nan,
             ))
+        elif fit_row["status"] == "fit_failed":
+            rows.append(dict(
+                **base, n_interior_points=int(fit_row["n_fit"]),
+                status="excluded", exclusion_stage="fit",
+                reason="fit_failed",
+                detail=f"curve_fit raised: {fit_row['fail_reason']}",
+                included_in_stage2=False, fit_r2=np.nan, fit_rmse=np.nan,
+            ))
         elif key in post_fit_keys:
             detail = post_fit_exclusions.loc[
                 (post_fit_exclusions["project"] == key[0])
@@ -219,6 +227,7 @@ def screening_summary_counts(report_df: pd.DataFrame) -> dict:
         "n_clean": int((report_df["status"] == "clean").sum()),
         "n_monotonicity_violation": int(counts.get("monotonicity_violation", 0)),
         "n_insufficient_interior_points": int(counts.get("insufficient_interior_points", 0)),
+        "n_fit_failed": int(counts.get("fit_failed", 0)),
         "n_bound_contact": int(counts.get("bound_contact", 0)),
         "excluded_pairs": list(zip(excluded["project"], excluded["cost_type"],
                                     excluded["reason"])),

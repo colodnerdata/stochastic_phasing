@@ -64,9 +64,13 @@ def fit_all_curves(df: pd.DataFrame) -> pd.DataFrame:
         t = g["pct_sched"].values.astype(float)
         y = g["pct_cost"].values.astype(float)
 
-        # Drop duplicate schedule points (keep last) and boundary points
-        _, keep = np.unique(t, return_index=True)
-        t, y = t[keep], y[keep]
+        # Drop duplicate schedule points (keep last) and boundary points.
+        # np.unique keeps the FIRST occurrence of each value, so reverse
+        # both arrays first to make that first occurrence the last one
+        # in original (ascending-t) order.
+        t_rev, y_rev = t[::-1], y[::-1]
+        _, keep_rev = np.unique(t_rev, return_index=True)
+        t, y = t_rev[keep_rev], y_rev[keep_rev]
         interior = (t > 1e-6) & (t < 1 - 1e-6) & (y > 1e-6) & (y < 1 - 1e-6)
         t_fit, y_fit = t[interior], y[interior]
 
@@ -74,6 +78,7 @@ def fit_all_curves(df: pd.DataFrame) -> pd.DataFrame:
             print(f"  SKIP {proj}/{ct}: only {len(t_fit)} interior points")
             rows.append(dict(
                 project=proj, cost_type=ct, status="insufficient_points",
+                fail_reason=None,
                 vintage=(float(g["year"].min())
                          if "year" in g.columns else np.nan),
                 alpha=np.nan, beta=np.nan, se_alpha=np.nan, se_beta=np.nan,
@@ -91,7 +96,8 @@ def fit_all_curves(df: pd.DataFrame) -> pd.DataFrame:
         except Exception as e:
             print(f"  FAIL {proj}/{ct}: {str(e)[:60]}")
             rows.append(dict(
-                project=proj, cost_type=ct, status="insufficient_points",
+                project=proj, cost_type=ct, status="fit_failed",
+                fail_reason=str(e)[:200],
                 vintage=(float(g["year"].min())
                          if "year" in g.columns else np.nan),
                 alpha=np.nan, beta=np.nan, se_alpha=np.nan, se_beta=np.nan,
@@ -120,6 +126,7 @@ def fit_all_curves(df: pd.DataFrame) -> pd.DataFrame:
         rows.append(
             dict(
                 project=proj, cost_type=ct, status="fit",
+                fail_reason=None,
                 vintage=(float(g["year"].min())
                          if "year" in g.columns else np.nan),
                 alpha=a_hat, beta=b_hat, se_alpha=se_a, se_beta=se_b,
@@ -140,8 +147,11 @@ def fit_all_curves(df: pd.DataFrame) -> pd.DataFrame:
         raise SystemExit(1)
 
     fitted = fits[fits["status"] == "fit"]
+    n_insufficient = (fits["status"] == "insufficient_points").sum()
+    n_failed = (fits["status"] == "fit_failed").sum()
     print(f"\nFitted {len(fitted)} curves "
-          f"({(fits['status'] == 'insufficient_points').sum()} skipped)")
+          f"({n_insufficient} skipped for insufficient points, "
+          f"{n_failed} fit failures)")
     for ct, g in fitted.groupby("cost_type"):
         print(f"  {ct}: n={len(g)}, median R2={g['r2'].median():.4f}, "
               f"mean RMSE={g['rmse'].mean():.4f}, at_bound={g['at_bound'].sum()}")
