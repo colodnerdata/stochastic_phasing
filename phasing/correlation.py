@@ -8,13 +8,14 @@ bias exactly the assumption this stage exists to validate.
 
 from __future__ import annotations
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 from scipy.stats import chi2, pearsonr, shapiro, spearmanr
 
 from . import config
-from .style import color_for as _color_for, ordered_types as _ordered_types
+from .style import color_for as _color_for
+from .style import ordered_types as _ordered_types
 
 
 def correlation_analysis(fits_for_stage2: pd.DataFrame) -> pd.DataFrame:
@@ -52,6 +53,90 @@ def correlation_analysis(fits_for_stage2: pd.DataFrame) -> pd.DataFrame:
     corr = pd.DataFrame(rows)
     corr.to_csv(config.OUTPUT_DIR / config.CORRELATIONS_FILENAME, index=False)
     return corr
+
+
+_DECOMP_SPACE_COLS = {
+    "ab": (("alpha", "beta"), ("se_alpha", "se_beta"), "cov_alpha_beta"),
+    "munu": (("mu", "nu"), ("se_mu", "se_nu"), "cov_mu_nu"),
+}
+
+
+def decompose_correlation(fits_for_stage2: pd.DataFrame, space: str = "ab") -> pd.DataFrame:
+    """Split observed cross-project covariance into estimator-induced and
+    population parts.
+
+    observed_cov  ~=  population_cov  +  mean(within-curve sampling cov)
+
+    so:  population_cov_hat = observed_cov - mean(per-curve cov from pcov)
+
+    Operates on `fits_for_stage2` (bound-contact fits already excluded),
+    matching this module's other statistics. Requires fits from
+    `fitting.fit_all_curves(df, keep_mu_nu=True)` (both spaces need
+    se_alpha/se_beta/cov_alpha_beta and se_mu/se_nu/cov_mu_nu).
+
+    Returns, per cost_type:
+      - observed correlation across projects
+      - mean per-curve estimator correlation (from the fitted pcov /
+        delta-method cov)
+      - implied population correlation after subtracting the estimator
+        component
+      - a flag if the subtraction makes the matrix non-positive-definite
+        (the estimator component is as large as the observed spread --
+        a real finding, not a bug). When flagged, population_r is NaN and
+        the uncorrected observed_r is reported as the fallback.
+    """
+    if space not in _DECOMP_SPACE_COLS:
+        raise ValueError(f"decompose_correlation: unknown space {space!r}")
+    (xcol, ycol), (se_x_col, se_y_col), cov_off_col = _DECOMP_SPACE_COLS[space]
+
+    rows = []
+    for ct, sub in fits_for_stage2.groupby("cost_type"):
+        x, y = sub[xcol].values, sub[ycol].values
+        n = len(sub)
+        obs_cov = np.cov(np.column_stack([x, y]).T)
+        obs_r = (obs_cov[0, 1] / np.sqrt(obs_cov[0, 0] * obs_cov[1, 1])
+                 if obs_cov[0, 0] > 0 and obs_cov[1, 1] > 0 else np.nan)
+
+        se_x = sub[se_x_col].values
+        se_y = sub[se_y_col].values
+        cov_off = sub[cov_off_col].values
+        valid = np.isfinite(se_x) & np.isfinite(se_y) & np.isfinite(cov_off)
+        if valid.any():
+            est_cov = np.array([
+                [np.mean(se_x[valid] ** 2), np.mean(cov_off[valid])],
+                [np.mean(cov_off[valid]), np.mean(se_y[valid] ** 2)],
+            ])
+            est_r = (est_cov[0, 1] / np.sqrt(est_cov[0, 0] * est_cov[1, 1])
+                     if est_cov[0, 0] > 0 and est_cov[1, 1] > 0 else np.nan)
+        else:
+            est_cov = np.full((2, 2), np.nan)
+            est_r = np.nan
+
+        non_pd = False
+        pop_r = np.nan
+        if valid.any():
+            pop_cov = obs_cov - est_cov
+            eigvals = np.linalg.eigvalsh(pop_cov)
+            non_pd = bool(np.any(eigvals < -1e-10))
+            if not non_pd:
+                denom = np.sqrt(pop_cov[0, 0] * pop_cov[1, 1])
+                pop_r = pop_cov[0, 1] / denom if denom > 0 else np.nan
+
+        rows.append(dict(
+            cost_type=ct, space=space, n=n,
+            observed_r=obs_r, estimator_r=est_r,
+            population_r=pop_r,
+            non_pd_flag=non_pd,
+            fallback_r=(obs_r if non_pd else np.nan),
+        ))
+        if non_pd:
+            print(f"  WARNING [{space}] {ct}: estimator-induced covariance "
+                  f"is as large as the observed cross-project spread -- "
+                  f"subtracting it leaves a non-positive-definite matrix. "
+                  f"population_r is not identified from these {n} curves; "
+                  f"falling back to the uncorrected observed_r={obs_r:+.3f}.")
+
+    return pd.DataFrame(rows)
 
 
 def plot_correlation_panels(fits_for_stage2: pd.DataFrame):

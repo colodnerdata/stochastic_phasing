@@ -11,18 +11,27 @@ Loads `data.csv` from this directory and runs:
   6. Joint distribution fits (BVN in unit space, BVN in log space = bivariate lognormal)
   7. PhasingPredictor + example TPC forecast with credible bands
 
-Expected columns (flexible name matching, override in phasing/config.py):
-  project, cost_type, year, cum_pct_cost, cum_pct_schedule
+Expected columns (flexible name matching, override in phasing/config.py).
+Two input formats are auto-detected, based on which columns are present:
+  cumulative:  project, cost_type, year, cum_pct_cost, cum_pct_schedule
+  incremental: project, year_from_start, inc_pct_spend, cum_pct_sched
+    (no cost_type column; single undifferentiated spend curve per project)
 
 Outputs written to ./outputs/ next to this script:
   fits.csv, screening_report.csv, correlations.csv, distributions.json,
   01_curve_overlays.png, 02_scatter_ellipses.png,
   03_correlation_panels.png, 04_qq_normality.png,
   05_tpc_prediction.png, tpc_quantile_table.csv, summary.txt
+  (--param munu/both additionally add mean-precision (mu, nu) columns to
+  fits.csv, a bvn_munu entry to distributions.json, and, for 'both', a
+  cross-parameterization verification, a correlation decomposition
+  (extra columns in correlations.csv + a summary.txt section), and
+  06_munu_scatter.png)
 
 Usage:
   python phasing_analysis.py            # full run, TPC as primary stratum
   python phasing_analysis.py --duration 36   # change example forecast duration
+  python phasing_analysis.py --param both    # + mean-precision parameterization
 
 Requires: numpy, pandas, scipy, matplotlib
 

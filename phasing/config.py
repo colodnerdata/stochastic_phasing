@@ -25,11 +25,18 @@ OUTPUT_DIR = SCRIPT_DIR / "outputs"
 # Set these to exact column names to skip auto-detection, e.g. "Project"
 COL_OVERRIDES = {
     "project": None,      # e.g. "project"
-    "cost_type": None,    # e.g. "cost_type"
+    "cost_type": None,    # e.g. "cost_type"; optional, see DEFAULT_COST_TYPE
     "pct_sched": None,    # e.g. "cum_pct_schedule"
-    "pct_cost": None,     # e.g. "cum_pct_cost"
+    "pct_cost": None,     # e.g. "cum_pct_cost" (cumulative spend format)
+    "inc_pct_cost": None, # e.g. "inc_pct_spend" (incremental spend format;
+                           # only used as a fallback when pct_cost is absent)
     "year": None,         # optional; chronological sort + vintage drift check
 }
+
+# Used when the input has no resolvable cost_type column (e.g. the
+# project/year-from-start/incremental-spend/cumulative-schedule format,
+# which carries a single undifferentiated spend curve per project).
+DEFAULT_COST_TYPE = "TPC"
 
 PRIMARY_COST_TYPE = "TPC"   # stratum used for the headline predictor
 COST_TYPE_ORDER = ["TPC", "TEC", "OPC"]  # plot ordering; unknown types appended

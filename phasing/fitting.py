@@ -5,13 +5,21 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 from scipy.optimize import curve_fit
-from scipy.special import betainc
+from scipy.special import betainc, expit
 
 from . import config
+from .parameterization import ab_to_mu_nu, delta_method_cov, mu_nu_to_ab
 
 
 def beta_cdf(t, a, b):
     return betainc(a, b, np.clip(t, 0.0, 1.0))
+
+
+_MU_NU_NAN_FIELDS = dict(
+    mu=np.nan, nu=np.nan, se_mu=np.nan, se_nu=np.nan,
+    cov_mu_nu=np.nan, cov_alpha_beta=np.nan,
+    logit_mu=np.nan, log_nu=np.nan,
+)
 
 
 def _moment_init(t: np.ndarray, y: np.ndarray) -> tuple[float, float]:
@@ -43,7 +51,7 @@ def _moment_init(t: np.ndarray, y: np.ndarray) -> tuple[float, float]:
     return float(np.clip(a, lo, hi)), float(np.clip(b, lo, hi))
 
 
-def fit_all_curves(df: pd.DataFrame) -> pd.DataFrame:
+def fit_all_curves(df: pd.DataFrame, keep_mu_nu: bool = False) -> pd.DataFrame:
     """Fit a Beta CDF to every (project, cost_type) group in `df`.
 
     Every group produces exactly one row, tagged with `status`:
@@ -54,6 +62,14 @@ def fit_all_curves(df: pd.DataFrame) -> pd.DataFrame:
 
     No group is silently dropped here — exclusion from downstream stages
     is `phasing.screening`'s job, not this module's.
+
+    Parameters
+    ----------
+    keep_mu_nu : bool, default False
+        If True, also attach the mean-precision (mu, nu) reparameterization
+        and its delta-method standard errors/covariance (from `pcov`) to
+        "fit" rows; NaN-filled for "insufficient_points"/"fit_failed" rows.
+        Default False reproduces the original column set exactly.
     """
     print("\n" + "=" * 70)
     print("STAGE 2: BETA CDF FITTING (per project x cost type)")
@@ -76,7 +92,7 @@ def fit_all_curves(df: pd.DataFrame) -> pd.DataFrame:
 
         if len(t_fit) < config.MIN_INTERIOR_POINTS:
             print(f"  SKIP {proj}/{ct}: only {len(t_fit)} interior points")
-            rows.append(dict(
+            row = dict(
                 project=proj, cost_type=ct, status="insufficient_points",
                 fail_reason=None,
                 vintage=(float(g["year"].min())
@@ -85,7 +101,10 @@ def fit_all_curves(df: pd.DataFrame) -> pd.DataFrame:
                 r2=np.nan, rmse=np.nan, max_abs_err=np.nan,
                 n_points=len(t), n_fit=len(t_fit), at_bound=False,
                 mean_timing=np.nan, mode_timing=np.nan,
-            ))
+            )
+            if keep_mu_nu:
+                row.update(_MU_NU_NAN_FIELDS)
+            rows.append(row)
             continue
 
         p0 = _moment_init(t_fit, y_fit)
@@ -95,7 +114,7 @@ def fit_all_curves(df: pd.DataFrame) -> pd.DataFrame:
             )
         except Exception as e:
             print(f"  FAIL {proj}/{ct}: {str(e)[:60]}")
-            rows.append(dict(
+            row = dict(
                 project=proj, cost_type=ct, status="fit_failed",
                 fail_reason=str(e)[:200],
                 vintage=(float(g["year"].min())
@@ -104,7 +123,10 @@ def fit_all_curves(df: pd.DataFrame) -> pd.DataFrame:
                 r2=np.nan, rmse=np.nan, max_abs_err=np.nan,
                 n_points=len(t), n_fit=len(t_fit), at_bound=False,
                 mean_timing=np.nan, mode_timing=np.nan,
-            ))
+            )
+            if keep_mu_nu:
+                row.update(_MU_NU_NAN_FIELDS)
+            rows.append(row)
             continue
 
         a_hat, b_hat = popt
@@ -123,23 +145,37 @@ def fit_all_curves(df: pd.DataFrame) -> pd.DataFrame:
             or np.any(np.isclose(popt, config.FIT_BOUNDS[1], atol=1e-3))
         )
 
-        rows.append(
-            dict(
-                project=proj, cost_type=ct, status="fit",
-                fail_reason=None,
-                vintage=(float(g["year"].min())
-                         if "year" in g.columns else np.nan),
-                alpha=a_hat, beta=b_hat, se_alpha=se_a, se_beta=se_b,
-                r2=r2, rmse=rmse, max_abs_err=max_abs_err,
-                n_points=len(t), n_fit=len(t_fit), at_bound=at_bound,
-                # Interpretive stats of the implied spend-timing Beta:
-                mean_timing=a_hat / (a_hat + b_hat),
-                mode_timing=(
-                    (a_hat - 1) / (a_hat + b_hat - 2)
-                    if a_hat > 1 and b_hat > 1 else np.nan
-                ),
-            )
+        row = dict(
+            project=proj, cost_type=ct, status="fit",
+            fail_reason=None,
+            vintage=(float(g["year"].min())
+                     if "year" in g.columns else np.nan),
+            alpha=a_hat, beta=b_hat, se_alpha=se_a, se_beta=se_b,
+            r2=r2, rmse=rmse, max_abs_err=max_abs_err,
+            n_points=len(t), n_fit=len(t_fit), at_bound=at_bound,
+            # Interpretive stats of the implied spend-timing Beta:
+            # mean_timing is kept for backward compatibility; it equals mu
+            # below and mu is the canonical mean-precision mean parameter.
+            mean_timing=a_hat / (a_hat + b_hat),
+            mode_timing=(
+                (a_hat - 1) / (a_hat + b_hat - 2)
+                if a_hat > 1 and b_hat > 1 else np.nan
+            ),
         )
+
+        if keep_mu_nu:
+            mu_hat, nu_hat = ab_to_mu_nu(a_hat, b_hat)
+            cov_ab = (pcov if np.all(np.isfinite(pcov))
+                      else np.full((2, 2), np.nan))
+            cov_mn = delta_method_cov(cov_ab, a_hat, b_hat)
+            row.update(dict(
+                mu=mu_hat, nu=nu_hat,
+                se_mu=np.sqrt(cov_mn[0, 0]), se_nu=np.sqrt(cov_mn[1, 1]),
+                cov_mu_nu=cov_mn[0, 1], cov_alpha_beta=cov_ab[0, 1],
+                logit_mu=np.log(mu_hat / (1.0 - mu_hat)), log_nu=np.log(nu_hat),
+            ))
+
+        rows.append(row)
 
     fits = pd.DataFrame(rows)
     if fits.empty or (fits["status"] == "fit").sum() == 0:
@@ -160,3 +196,71 @@ def fit_all_curves(df: pd.DataFrame) -> pd.DataFrame:
         print(f"  NOTE: {nb} fits hit parameter bounds — excluded from "
               f"Stage 2, kept in fits.csv for review.")
     return fits
+
+
+def _munu_beta_cdf(t, logit_mu, log_nu):
+    """Beta CDF reparameterized by unconstrained (logit mu, log nu)."""
+    mu = expit(logit_mu)
+    nu = np.exp(log_nu)
+    alpha, beta = mu_nu_to_ab(mu, nu)
+    return beta_cdf(t, alpha, beta)
+
+
+def fit_all_curves_mu_nu(df: pd.DataFrame) -> pd.DataFrame:
+    """Refit every curve in unconstrained (logit mu, log nu) space.
+
+    This is a verification fit, not a replacement (see
+    `phasing.verification.verify_parameterizations`): optimizing over
+    (logit mu, log nu) needs no bounds (mu is squashed to (0,1) via expit,
+    nu is squashed to (0,inf) via exp), so it also tells us whether curves
+    that hit the (alpha, beta) FIT_BOUNDS box do so because that is the
+    genuine optimum or because of the artificial box constraint.
+
+    Uses the same duplicate-handling / interior-point selection as
+    `fit_all_curves`, but skips (rather than status-tags) curves it can't
+    fit -- this is a diagnostic utility, not a primary output.
+
+    Returns
+    -------
+    pd.DataFrame
+        One row per successfully fitted curve: project, cost_type, mu, nu,
+        alpha, beta (implied), logit_mu, log_nu, and pcov_munu (the raw
+        2x2 covariance of (logit_mu_hat, log_nu_hat) from curve_fit).
+    """
+    rows = []
+    for (proj, ct), g in df.groupby(["project", "cost_type"]):
+        t = g["pct_sched"].values.astype(float)
+        y = g["pct_cost"].values.astype(float)
+
+        t_rev, y_rev = t[::-1], y[::-1]
+        _, keep_rev = np.unique(t_rev, return_index=True)
+        t, y = t_rev[keep_rev], y_rev[keep_rev]
+        interior = (t > 1e-6) & (t < 1 - 1e-6) & (y > 1e-6) & (y < 1 - 1e-6)
+        t_fit, y_fit = t[interior], y[interior]
+
+        if len(t_fit) < config.MIN_INTERIOR_POINTS:
+            continue
+
+        a0, b0 = _moment_init(t_fit, y_fit)
+        mu0, nu0 = ab_to_mu_nu(a0, b0)
+        p0 = [np.log(mu0 / (1.0 - mu0)), np.log(nu0)]
+        try:
+            popt, pcov = curve_fit(
+                _munu_beta_cdf, t_fit, y_fit, p0=p0, maxfev=20000
+            )
+        except Exception as e:
+            print(f"  FAIL (mu,nu) {proj}/{ct}: {str(e)[:60]}")
+            continue
+
+        logit_mu_hat, log_nu_hat = popt
+        mu_hat, nu_hat = expit(logit_mu_hat), np.exp(log_nu_hat)
+        alpha_hat, beta_hat = mu_nu_to_ab(mu_hat, nu_hat)
+
+        rows.append(dict(
+            project=proj, cost_type=ct,
+            mu=mu_hat, nu=nu_hat, alpha=alpha_hat, beta=beta_hat,
+            logit_mu=logit_mu_hat, log_nu=log_nu_hat,
+            pcov_munu=pcov,
+        ))
+
+    return pd.DataFrame(rows)

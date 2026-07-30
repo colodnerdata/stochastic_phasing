@@ -10,26 +10,51 @@ from __future__ import annotations
 import argparse
 
 import numpy as np
+import pandas as pd
 
-from . import config, correlation, data, distributions, eda, fitting, screening, summary
+from . import (
+    config,
+    correlation,
+    data,
+    distributions,
+    eda,
+    fitting,
+    screening,
+    summary,
+    verification,
+)
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--duration", type=int, default=24,
                     help="Example forecast duration in months (default 24)")
-    ap.add_argument("--model", choices=["bvn_log", "bvn_unit"],
-                    default="bvn_log", help="Predictor sampling model")
+    ap.add_argument("--model", choices=["bvn_log", "bvn_unit", "bvn_munu"],
+                    default="bvn_log", help="Predictor sampling model "
+                    "('bvn_munu' requires --param munu or --param both)")
+    ap.add_argument("--param", choices=["ab", "munu", "both"], default="ab",
+                    help="Parameterization mode. 'ab' (default) reproduces "
+                    "current behavior exactly. 'munu' also adds mean-"
+                    "precision (mu, nu) columns to fits.csv and a bvn_munu "
+                    "entry to distributions.json. 'both' additionally runs "
+                    "the mu,nu-space cross-parameterization verification, "
+                    "the estimator-vs-population correlation decomposition, "
+                    "and writes 06_munu_scatter.png.")
     args = ap.parse_args()
+    if args.model == "bvn_munu" and args.param not in ("munu", "both"):
+        ap.error("--model bvn_munu requires --param munu or --param both "
+                 "(the bvn_munu distribution is only fit in those modes)")
 
     np.random.seed(config.RNG_SEED)
     config.OUTPUT_DIR.mkdir(exist_ok=True)
+
+    use_munu = args.param in ("munu", "both")
 
     df, _ = data.load_and_validate()
 
     df_clean, pre_fit_exclusions = screening.screen_pre_fit(df)
 
-    fits = fitting.fit_all_curves(df_clean)
+    fits = fitting.fit_all_curves(df_clean, keep_mu_nu=use_munu)
     fits.to_csv(config.OUTPUT_DIR / config.FITS_FILENAME, index=False)
     print(f"Saved -> {config.OUTPUT_DIR / config.FITS_FILENAME}")
 
@@ -55,7 +80,30 @@ def main():
     correlation.plot_qq_normality(fits_for_stage2)
     print("Saved -> 03_correlation_panels.png, 04_qq_normality.png")
 
-    dists = distributions.fit_joint_distributions(fits_for_stage2)
+    dists = distributions.fit_joint_distributions(fits_for_stage2, include_munu=use_munu)
+
+    decomp = None
+    if args.param == "both":
+        print("\n" + "=" * 70)
+        print("STAGE 2b: MEAN-PRECISION VERIFICATION & DECOMPOSITION")
+        print("=" * 70)
+        fits_munu = fitting.fit_all_curves_mu_nu(df_clean)
+        verification.verify_parameterizations(fits, fits_munu)
+
+        decomp_ab = correlation.decompose_correlation(fits_for_stage2, space="ab")
+        decomp_munu = correlation.decompose_correlation(fits_for_stage2, space="munu")
+        decomp = pd.concat([decomp_ab, decomp_munu], ignore_index=True)
+
+        decomp_wide = decomp.pivot(index="cost_type", columns="space")
+        decomp_wide.columns = [f"{sp}_{col}" for col, sp in decomp_wide.columns]
+        decomp_wide = decomp_wide.reset_index()
+        corr = corr.merge(decomp_wide, on="cost_type", how="left")
+        corr.to_csv(config.OUTPUT_DIR / config.CORRELATIONS_FILENAME, index=False)
+        print(f"Saved -> {config.OUTPUT_DIR / config.CORRELATIONS_FILENAME} "
+              "(with correlation-decomposition columns)")
+
+        eda.plot_munu_scatter(fits)
+        print("Saved -> 06_munu_scatter.png")
 
     if config.PRIMARY_COST_TYPE in fits_for_stage2["cost_type"].values:
         pred = distributions.PhasingPredictor(dists, model=args.model)
@@ -68,5 +116,5 @@ def main():
               f"data; skipping prediction.")
 
     summary.write_summary(fits, fits_for_stage2, corr, dists, args.duration,
-                          screening_counts)
+                          screening_counts, decomp=decomp)
     print("\nDONE. All outputs in:", config.OUTPUT_DIR)
