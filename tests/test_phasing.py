@@ -490,6 +490,7 @@ def test_cli_presentation_flag_writes_figures(tmp_path, monkeypatch):
     pres_dir = config.OUTPUT_DIR / "presentation"
     expected = [
         "f01_curve_fan.png", "f02_beta_atlas.png", "f03_scatter_ellipse.png",
+        "f03a_scatter_ellipse_munu.png",
         "f04_coupling.png", "f05_mixture.png", "f06_quantile_bars.png",
         "f07_conditional.png", "f08_fan_annotated.png", "f09_per_formula.png",
     ]

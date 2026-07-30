@@ -38,6 +38,7 @@ Figures
     f01 historical curve fan (normalized), spread annotated at 50% schedule
     f02 Beta shape atlas as density/CDF pairs
     f03 fitted (alpha, beta) scatter with 95% ellipses, unit and log space
+    f03a same, in the mean-precision (mu, nu) parameterization
     f04 where the uncertainty lives: normalized time vs calendar time
     f05 a late fiscal year as a mixture distribution
     f06 unconditional annual quantiles, showing the P50 truncation
@@ -58,12 +59,15 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mtick
 import numpy as np
 import pandas as pd
 from matplotlib.gridspec import GridSpec
-from scipy.stats import beta as sbeta
+from scipy.special import logit
+from scipy.stats import beta as sbeta, chi2
 
 from .fitting import beta_cdf as bcdf
+from .parameterization import ab_to_mu_nu
 from .style import conf_ellipse
 
 # ============================================================================
@@ -347,6 +351,21 @@ def _save(fig, out: Path, name: str, inp: Inputs, tight: bool = False) -> Path:
 def _color_for(cost_type: str, i: int = 0) -> str:
     return COST_TYPE_COLOR.get(cost_type.upper(), FALLBACK_CYCLE[i % len(FALLBACK_CYCLE)])
 
+def _ellipse_coverage(x: np.ndarray, y: np.ndarray, q: float = 0.95) -> float | None:
+    """Empirical fraction of (x, y) inside their own q-level BVN ellipse.
+
+    Goodness-of-fit for the elliptical/BVN approximation drawn by
+    `conf_ellipse`: under a true bivariate normal this should land near `q`.
+    Mirrors the mean/cov/Mahalanobis math in `style.conf_ellipse`.
+    """
+    if len(x) < 3:
+        return None
+    d = np.column_stack([x, y])
+    mean, cov = d.mean(axis=0), np.cov(d.T)
+    diff = d - mean
+    m2 = np.einsum("ij,jk,ik->i", diff, np.linalg.inv(cov), diff)
+    return float(np.mean(m2 <= chi2.ppf(q, df=2)))
+
 
 # ============================================================================
 # Figures
@@ -376,6 +395,8 @@ def fig01_curve_fan(inp: Inputs, cfg: SimConfig, out: Path) -> None:
                  fontsize=12, fontweight="bold")
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
+    ax.xaxis.set_major_formatter(mtick.PercentFormatter(xmax=1))
+    ax.yaxis.set_major_formatter(mtick.PercentFormatter(xmax=1))
     ax.legend(frameon=False, loc="upper left", fontsize=10)
     fig.tight_layout()
     _save(fig, out, "f01_curve_fan", inp)
@@ -398,8 +419,8 @@ def fig02_beta_atlas(inp: Inputs, cfg: SimConfig, out: Path) -> None:
         ax.plot(t, pdf, color=c, lw=2.4)
         ax.fill_between(t, 0, pdf, color=c, alpha=0.16)
         ax.axvline(mu, color=CRIM, lw=1.5, ls="--")
-        ax.annotate(f"\u03bc={mu:.2f}", xy=(mu, ax.get_ylim()[1] * 0.90),
-                    xytext=(4, 0), textcoords="offset points", color=CRIM,
+        ax.annotate(f"\u03bc={mu:.2f}", xy=(mu, ax.get_ylim()[1] * 0.97),
+                    xytext=(4, 6), textcoords="offset points", color=CRIM,
                     fontweight="bold", fontsize=9)
         if A > 1 and B > 1:
             mode = (A - 1) / (A + B - 2)
@@ -411,6 +432,7 @@ def fig02_beta_atlas(inp: Inputs, cfg: SimConfig, out: Path) -> None:
         ax.set_xticks([0, .5, 1])
         ax.set_xticklabels([])
         ax.set_ylim(0, max(2.6, pdf.max() * 1.22))
+        ax.set_yticklabels([])
         if k == 0:
             ax.set_ylabel("spend rate\nf(t)", fontsize=9.5, color=DEEP, linespacing=1.4)
 
@@ -422,6 +444,8 @@ def fig02_beta_atlas(inp: Inputs, cfg: SimConfig, out: Path) -> None:
         ax.set_ylim(0, 1)
         ax.set_xticks([0, .5, 1])
         ax.set_yticks([0, .5, 1])
+        ax.xaxis.set_major_formatter(mtick.PercentFormatter(xmax=1))
+        ax.yaxis.set_major_formatter(mtick.PercentFormatter(xmax=1))
         ax.set_xlabel("% of schedule", fontsize=9)
         if k == 0:
             ax.set_ylabel("cumulative\nF(t)", fontsize=9.5, color=DEEP, linespacing=1.4)
@@ -435,37 +459,81 @@ def fig02_beta_atlas(inp: Inputs, cfg: SimConfig, out: Path) -> None:
     plt.close(fig)
     print(f" wrote {out / 'f02_beta_atlas.png'}")
 
-def fig03_scatter_ellipse(inp: Inputs, cfg: SimConfig, out: Path) -> None:
-    """Fitted (alpha, beta) by stratum with 95% ellipses, unit and log space."""
+def _fig03_core(inp: Inputs, out: Path, name: str, panels: list[tuple]) -> None:
+    """Shared scatter + 95% ellipse + coverage-GoF panel pair for f03 / f03a.
+
+    panels: list of (title, xy_fn, xlabel, ylabel, ref), where xy_fn maps
+    (alpha_array, beta_array) -> (x_array, y_array) for that panel, and ref
+    is either "diag" (draw the x=y reference line -- meaningful when the axes
+    ARE alpha/beta) or a float (draw a vertical reference line there instead,
+    e.g. at mu=0.5 for the symmetric-curve reference in mu/nu space).
+    """
     df = inp.all_fits if inp.all_fits is not None else pd.DataFrame(
         {"alpha": inp.alpha, "beta": inp.beta, "cost_type": inp.cost_type})
     types = [t for t in ["TPC", "TEC", "OPC"] if t in set(df["cost_type"])]
     types += [t for t in sorted(set(df["cost_type"])) if t not in types]
 
     fig, axs = plt.subplots(1, 2, figsize=(9.4, 4.4))
-    for ax, space in zip(axs, ["unit", "log"]):
+    for ax, (title, xy_fn, xlab, ylab, ref) in zip(axs, panels):
+        cov_lines = []
         for i, ct in enumerate(types):
             sub = df[df["cost_type"] == ct]
-            X = sub["alpha"].to_numpy(float)
-            Y = sub["beta"].to_numpy(float)
-            if space == "log":
-                X, Y = np.log(X), np.log(Y)
+            X, Y = xy_fn(sub["alpha"].to_numpy(float), sub["beta"].to_numpy(float))
             c = _color_for(ct, i)
             ax.scatter(X, Y, s=85, color=c, edgecolor=NAVY, lw=1.1, zorder=3,
                        alpha=0.9, label=f"{ct} (n={len(sub)})")
             conf_ellipse(ax, X, Y, c)
-        ax.set_xlabel("\u03b1" if space == "unit" else "ln \u03b1")
-        ax.set_ylabel("\u03b2" if space == "unit" else "ln \u03b2")
-        ax.set_title(f"{space.capitalize()} space", fontsize=12, fontweight="bold")
-        lim = ax.get_xlim()
-        ax.plot(lim, lim, ls=":", color=BORD, lw=1.2)
-        ax.set_xlim(lim)
-    axs[0].text(0.03, 0.95, "each point = one completed project",
+            cov = _ellipse_coverage(X, Y)
+            if cov is not None:
+                cov_lines.append((c, f"{ct} {cov:.0%} (n={len(sub)})"))
+        ax.set_xlabel(xlab)
+        ax.set_ylabel(ylab)
+        ax.set_title(title, fontsize=12, fontweight="bold")
+        if ref == "diag":
+            lim = ax.get_xlim()
+            ax.plot(lim, lim, ls=":", color=BORD, lw=1.2)
+            ax.set_xlim(lim)
+        else:
+            ax.axvline(ref, ls=":", color=BORD, lw=1.2)
+        if cov_lines:
+            ax.text(0.97, 0.95, "95% ellipse coverage", transform=ax.transAxes,
+                    ha="right", va="top", fontsize=8.5, color=DEEP, fontweight="bold")
+            for j, (c, txt) in enumerate(cov_lines):
+                ax.text(0.97, 0.885 - 0.065 * j, txt, transform=ax.transAxes,
+                        ha="right", va="top", fontsize=8.5, color=c)
+    axs[0].text(0.03, 0.05, "each point = one completed project",
                 transform=axs[0].transAxes, fontsize=9.5, color=SLATE,
-                va="top", style="italic")
-    axs[1].legend(frameon=False, fontsize=9)
+                va="bottom", style="italic")
+    axs[1].legend(frameon=False, fontsize=9, loc="lower right")
     fig.tight_layout()
-    _save(fig, out, "f03_scatter_ellipse", inp)
+    _save(fig, out, name, inp)
+
+def fig03_scatter_ellipse(inp: Inputs, cfg: SimConfig, out: Path) -> None:
+    """Fitted (alpha, beta) by stratum with 95% ellipses, unit and log space."""
+    _fig03_core(inp, out, "f03_scatter_ellipse", [
+        ("Unit space", lambda a, b: (a, b), "\u03b1", "\u03b2", "diag"),
+        ("Log space", lambda a, b: (np.log(a), np.log(b)), "ln \u03b1", "ln \u03b2", "diag"),
+    ])
+
+def fig03a_scatter_ellipse_munu(inp: Inputs, cfg: SimConfig, out: Path) -> None:
+    """Same fitted curves in the mean-precision (mu, nu) parameterization.
+
+    mu = alpha / (alpha + beta) (mean spend timing), nu = alpha + beta
+    (precision/concentration) -- see parameterization.ab_to_mu_nu. The log
+    panel uses (logit mu, log nu), the exact coordinates distributions.py
+    fits as "bvn_munu".
+    """
+    def unit_xy(a, b):
+        return ab_to_mu_nu(a, b)
+
+    def log_xy(a, b):
+        mu, nu = ab_to_mu_nu(a, b)
+        return logit(mu), np.log(nu)
+
+    _fig03_core(inp, out, "f03a_scatter_ellipse_munu", [
+        ("(\u03bc, \u03bd) space", unit_xy, "\u03bc", "\u03bd", 0.5),
+        ("(logit \u03bc, log \u03bd) space", log_xy, "logit \u03bc", "log \u03bd", 0.0),
+    ])
 
 def fig04_coupling(inp: Inputs, cfg: SimConfig, out: Path, sim: SimResult) -> None:
     """Where each uncertainty lives: normalized time vs calendar time."""
@@ -493,6 +561,8 @@ def fig04_coupling(inp: Inputs, cfg: SimConfig, out: Path, sim: SimResult) -> No
     ax.legend(frameon=False, fontsize=9.5, loc="lower right")
     ax.set_xlim(0, 100)
     ax.set_ylim(0, 102)
+    ax.xaxis.set_major_formatter(mtick.PercentFormatter(xmax=100))
+    ax.yaxis.set_major_formatter(mtick.PercentFormatter(xmax=100))
 
     ax = axs[1]
     m = min(cfg.calendar_month, cfg.max_month)
@@ -509,10 +579,11 @@ def fig04_coupling(inp: Inputs, cfg: SimConfig, out: Path, sim: SimResult) -> No
           - np.percentile(sim.pct_samp[:, m], 5)) * 100
     ax.axvline(m, color=GOLD, ls="--", lw=1.3)
     ax.annotate(f"month {m}:\n{w1:.0f} pt \u2192 {w2:.0f} pt\n(duration dominates)",
-                xy=(m, 40), xytext=(m + 12, 16), fontsize=10.5, color=GOLD,
+                xy=(m, 50), xytext=(m + 12, 26), fontsize=10.5, color=GOLD,
                 fontweight="bold", arrowprops=dict(arrowstyle="->", color=GOLD, lw=1.6))
     ax.set_xlabel("Month")
     ax.set_ylabel("Cumulative % of cost")
+    ax.yaxis.set_major_formatter(mtick.PercentFormatter(xmax=100))
     ax.set_title("Calendar time:\nduration uncertainty takes over",
                  fontsize=11.5, fontweight="bold")
     ax.legend(frameon=False, fontsize=9.5, loc="lower right")
@@ -541,8 +612,9 @@ def fig05_mixture(inp: Inputs, cfg: SimConfig, out: Path, sim: SimResult) -> Non
                 fontsize=13, color=[CRIM, TEAL][i])
     ax.set_ylim(0, 1.08)
     ax.set_ylabel("Share of simulation runs")
+    ax.yaxis.set_major_formatter(mtick.PercentFormatter(xmax=1))
     ax.set_title("Mixture weights", fontsize=11.5, fontweight="bold")
-    ax.grid(axis="x")
+    ax.grid(False)
 
     ax = axs[1]
     pos = v[v > cfg.active_threshold]
@@ -557,28 +629,33 @@ def fig05_mixture(inp: Inputs, cfg: SimConfig, out: Path, sim: SimResult) -> Non
     ax.set_title("Continuous part (conditional on active)",
                  fontsize=11.5, fontweight="bold")
     fig.suptitle(f"{lab} annual spend is a MIXTURE: point mass at $0 + continuous lobe",
-                 fontsize=12.5, fontweight="bold", color=DEEP)
-    fig.tight_layout(rect=[0, 0, 1, 0.93])
+                 fontsize=12.5, fontweight="bold", color=DEEP, y=0.995)
+    lo, hi = cfg.duration_clip
+    fig.text(0.5, 0.925,
+             f"Notional duration: D ~ LogNormal(median={cfg.duration_median:.0f} mo, "
+             f"σ={cfg.duration_sigma:.2f}), clipped to [{lo:.0f}, {hi:.0f}] mo",
+             ha="center", fontsize=9.5, color=SLATE, style="italic")
+    fig.tight_layout(rect=[0, 0, 1, 0.87])
     _save(fig, out, "f05_mixture", inp)
 
 
 def fig06_quantile_bars(inp: Inputs, cfg: SimConfig, out: Path, sim: SimResult) -> None:
     """Unconditional annual quantiles, showing where the P50 profile truncates."""
-    q10, q50, q90 = (np.percentile(sim.fy, q, axis=0) for q in (10, 50, 90))
+    q15, q50, q85 = (np.percentile(sim.fy, q, axis=0) for q in (15, 50, 85))
     x = np.arange(cfg.n_fy)
-    w = 0.26
+    w = 1 / 3
     fig, ax = plt.subplots(figsize=(9.6, 4.5))
-    ax.bar(x - w, q10, w, color=BORD, label="P10")
+    ax.bar(x - w, q15, w, color=GOLD, label="P15")
     ax.bar(x, q50, w, color=NAVY, label="P50")
-    ax.bar(x + w, q90, w, color=TEAL, label="P90")
+    ax.bar(x + w, q85, w, color=TEAL, label="P85")
 
     below = np.where(q50 < cfg.active_threshold)[0]
     if below.size:
         f0 = int(below[0])
         ax.axvspan(f0 - 0.5, cfg.n_fy - 0.5, color=CRIM, alpha=0.07)
         ax.annotate(f"P50 = $0 from {sim.fy_labels[f0]} onward,\n"
-                    f"but P90 is still ${q90[f0]:.0f}M",
-                    xy=(f0, q90[f0]), xytext=(max(f0 , 0.1), q90[f0] + 38),
+                    f"but P85 is still ${q85[f0]:.0f}M",
+                    xy=(f0, q85[f0]), xytext=(max(f0 , 0.1), q85[f0] + 38),
                     fontsize=10.5, color=CRIM, fontweight="bold",
                     arrowprops=dict(arrowstyle="->", color=CRIM, lw=1.6))
     ax.set_xticks(x)
@@ -587,6 +664,7 @@ def fig06_quantile_bars(inp: Inputs, cfg: SimConfig, out: Path, sim: SimResult) 
     ax.set_title("Unconditional annual quantiles \u2014 the P50 profile truncates early",
                  fontsize=12.5, fontweight="bold")
     ax.legend(frameon=False, fontsize=10)
+    ax.grid(False)
     fig.tight_layout()
     _save(fig, out, "f06_quantile_bars", inp)
 
@@ -606,24 +684,26 @@ def fig07_conditional(inp: Inputs, cfg: SimConfig, out: Path, sim: SimResult) ->
                          if sim.active[:, y].sum() > 30 else np.nan
                          for y in range(n)])
 
-    c10, c50, c90 = cq(10), cq(50), cq(90)
+    c15, c50, c85 = cq(15), cq(50), cq(85)
     fig, ax = plt.subplots(figsize=(9.6, 4.6))
-    ax.bar(x, c50, 0.55, color=TEAL, label="Median spend | active")
-    ax.vlines(x, c10, c90, color=NAVY, lw=2.4, label="P10\u2013P90 | active")
+    ax.bar(x, c50, 0.75, color=TEAL, label="Median spend | active")
+    ax.vlines(x, c15, c85, color=NAVY, lw=2.4, label="P15\u2013P85 | active")
     ax.set_ylabel("Annual spend given still active ($M)")
     ax.set_xticks(x)
     ax.set_xticklabels(sim.fy_labels)
+    ax.grid(False)
 
     ax2 = ax.twinx()
     ax2.plot(x, sim.p_active, color=GOLD, lw=3, marker="o", ms=6, label="P(active)")
     ax2.set_ylabel("P(project still active)", color=GOLD)
     ax2.tick_params(axis="y", colors=GOLD)
     ax2.set_ylim(0, 1.05)
+    ax2.yaxis.set_major_formatter(mtick.PercentFormatter(xmax=1))
     ax2.grid(False)
     for y in range(n):
         if 0.03 < sim.p_active[y] < 0.8:
             ax2.annotate(f"{sim.p_active[y]:.0%}", (y, sim.p_active[y]),
-                         textcoords="offset points", xytext=(0, 9), ha="center",
+                         textcoords="offset points", xytext=(8, 10), ha="left",
                          color=GOLD, fontweight="bold", fontsize=9.5)
     h1, l1 = ax.get_legend_handles_labels()
     h2, l2 = ax2.get_legend_handles_labels()
@@ -660,13 +740,13 @@ def fig08_fan_annotated(inp: Inputs, cfg: SimConfig, out: Path, sim: SimResult) 
     ax.axvline(d50, color=NAVY, ls=":", lw=2.4,
                label=f"Median completion \u2014 month {d50:.0f}")
     ax.axvline(d85, color=GOLD, ls=":", lw=2.4,
-               label=f"P95 completion \u2014 month {d85:.0f}")
+               label=f"P85 completion \u2014 month {d85:.0f}")
 
     ytop = ax.get_ylim()[1]
     ya = ytop * 0.13
     ax.annotate("", xy=(d50, ya), xytext=(d85, ya),
                 arrowprops=dict(arrowstyle="<->", color=CRIM, lw=2.2))
-    ax.text((d50 + 85) / 2, ya * 1.28, f"schedule risk: {d85 - d50:.0f} months",
+    ax.text((d50 + d85) / 2, ya * 1.28, f"schedule risk\n{d85 - d50:.0f} months",
             ha="center", color=CRIM, fontweight="bold", fontsize=10.5)
     ax.set_xlabel("Month")
     ax.set_ylabel("Cumulative spend ($M)")
@@ -719,7 +799,7 @@ def fig09_per_formula(inp: Inputs, cfg: SimConfig, out: Path) -> None:
             r"=C\int_{t_{y-1}}^{t_y}f(u)\,du$",
             fontsize=16.5, color=CRIM, va="top", transform=T)
     ax.text(.045, .085,
-            r"$t_y=m_y/D$ \u2014 $C$ = total cost draw, $D$ = duration draw,"
+            r"$t_y=m_y/D$" " \u2014 " r"$C$ = total cost draw, $D$ = duration draw,"
             "\n" r"$m_y$ = months elapsed at the end of year $y$",
             fontsize=11, color=SLATE, va="top", linespacing=1.7, transform=T)
 
@@ -738,20 +818,21 @@ def fig09_per_formula(inp: Inputs, cfg: SimConfig, out: Path) -> None:
     ax.set_xlim(0, 1)
     ax.set_ylim(0, pdf.max() * 1.18)
     ax.set_xticks(edges)
-    ax.set_xticklabels([f"{e:.1f}" for e in edges])
+    ax.xaxis.set_major_formatter(mtick.PercentFormatter(xmax=1))
     ax.set_ylabel("$f(t)$", fontsize=11)
     ax.set_title("Area of each strip = that year's phasing percentage",
                  fontsize=11.5, fontweight="bold", color=DEEP, pad=8)
 
     ax = fig.add_subplot(gs[1, 1])
     xs = np.arange(ny)
-    ax.bar(xs, ann * 100, width=0.62, color=TEAL, edgecolor=DTEAL, lw=1.1)
+    ax.bar(xs, ann * 100, width=1.0, color=TEAL, edgecolor=NAVY, lw=1.4)
     for k, v in enumerate(ann * 100):
         ax.text(k, v + 1.1, f"{v:.0f}%", ha="center", fontsize=10.5,
                 fontweight="bold", color=DEEP)
     ax.set_xticks(xs)
     ax.set_xticklabels([f"FY{k + 1}" for k in xs], fontsize=10)
     ax.set_ylabel("% of total", fontsize=10.5)
+    ax.yaxis.set_major_formatter(mtick.PercentFormatter(xmax=100))
     ax.set_ylim(0, max(ann * 100) * 1.32)
     ax.text(.985, .86, f"sums to {ann.sum() * 100:.0f}%", transform=ax.transAxes,
             ha="right", fontsize=10.5, color=CRIM, fontweight="bold")
@@ -768,6 +849,7 @@ def fig09_per_formula(inp: Inputs, cfg: SimConfig, out: Path) -> None:
 
 FIGURES = {
     "f01": "curve fan", "f02": "beta atlas", "f03": "scatter + ellipses",
+    "f03a": "scatter + ellipses (mu/nu)",
     "f04": "coupling", "f05": "mixture", "f06": "quantile bars",
     "f07": "conditional", "f08": "fan annotated", "f09": "PER formula",
 }
@@ -819,6 +901,8 @@ def generate_figures(inp: Inputs, cfg: SimConfig, out: Path,
             fig02_beta_atlas(inp, cfg, out)
         if "f03" in wanted:
             fig03_scatter_ellipse(inp, cfg, out)
+        if "f03a" in wanted:
+            fig03a_scatter_ellipse_munu(inp, cfg, out)
         if "f04" in wanted:
             fig04_coupling(inp, cfg, out, sim)
         if "f05" in wanted:
