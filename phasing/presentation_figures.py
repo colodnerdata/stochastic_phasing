@@ -201,6 +201,8 @@ def build_inputs(fits: pd.DataFrame, dists: dict | None, cost_type: str,
         Stratum to feature (e.g. "TPC").
     """
     notes = list(notes or [])
+    fits = fits.copy()
+    fits["cost_type"] = fits["cost_type"].astype(str).str.strip().str.upper()
     sub = fits[fits["cost_type"] == cost_type.upper()]
     if sub.empty:
         raise SystemExit(
@@ -247,9 +249,7 @@ def load_inputs(fits_path: str | None, dists_path: str | None, cost_type: str,
         return _illustrative_inputs(rng, cost_type)
 
     fits = pd.read_csv(fits_path)
-    if "cost_type" in fits.columns:
-        fits["cost_type"] = fits["cost_type"].astype(str).str.strip().str.upper()
-    else:
+    if "cost_type" not in fits.columns:
         fits["cost_type"] = cost_type
 
     notes: list[str] = []

@@ -442,6 +442,14 @@ def test_build_inputs_prefers_bvn_log_and_falls_back_to_fits():
     assert np.allclose(inp.mu_ln, mu)
     assert np.allclose(inp.cov_ln, cov)
 
+    # cost_type values are normalized before filtering, without mutating the
+    # caller's frame
+    messy = fits.assign(cost_type=[" tpc", "TPC ", "tpc", "opc", " OPC "])
+    inp_messy = pres.build_inputs(messy, dists, "tpc")
+    assert len(inp_messy.alpha) == 3
+    assert set(inp_messy.all_fits["cost_type"]) == {"TPC", "OPC"}
+    assert messy["cost_type"].iloc[0] == " tpc"
+
     # No bvn_log entry for OPC -> population estimated from the fitted curves,
     # never from the differently-parameterized bvn_munu entry.
     inp_opc = pres.build_inputs(fits, dists, "OPC")
