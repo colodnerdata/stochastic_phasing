@@ -8,6 +8,7 @@ while bound-contact is only knowable post-fit (screened after).
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -27,6 +28,12 @@ from . import (
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--data", type=Path, default=None,
+                    help="Path to the input CSV (default: phasing/config.py's "
+                    "DATA_PATH, i.e. data.csv at the repo root). Output still "
+                    "goes to OUTPUT_DIR regardless of --data, so point "
+                    "different runs at different datasets one at a time, or "
+                    "move outputs/ between runs to keep results separate.")
     ap.add_argument("--duration", type=int, default=24,
                     help="Example forecast duration in months (default 24)")
     ap.add_argument("--model", choices=["bvn_log", "bvn_unit", "bvn_munu"],
@@ -44,6 +51,8 @@ def main():
     if args.model == "bvn_munu" and args.param not in ("munu", "both"):
         ap.error("--model bvn_munu requires --param munu or --param both "
                  "(the bvn_munu distribution is only fit in those modes)")
+    if args.data is not None:
+        config.DATA_PATH = args.data
 
     np.random.seed(config.RNG_SEED)
     config.OUTPUT_DIR.mkdir(exist_ok=True)

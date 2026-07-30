@@ -380,5 +380,39 @@ def test_cli_rejects_bvn_munu_model_without_munu_param(monkeypatch):
     assert exc_info.value.code == 2  # argparse.error() exit code, not a KeyError
 
 
+# ============================================================================
+# CLI: --data targets an alternate dataset
+# ============================================================================
+
+def test_cli_data_flag_targets_alternate_dataset(tmp_path, monkeypatch):
+    """--data should point load_and_validate at an arbitrary CSV, not just
+    the repo-root data.csv, and end to end produce fits.csv from it."""
+    from phasing.pipeline import main as pipeline_main
+
+    # Register DATA_PATH with monkeypatch (same value) so its teardown
+    # restores whatever it was before this test, even though `main()`
+    # itself -- not this test -- is what reassigns it via --data.
+    monkeypatch.setattr(config, "DATA_PATH", config.DATA_PATH)
+
+    csv_path = tmp_path / "custom_data.csv"
+    rng = np.random.default_rng(42)
+    rows = []
+    for i in range(6):
+        a, b = mu_nu_to_ab(0.5, 8.0)
+        t = np.sort(rng.uniform(0.02, 0.98, 10))
+        y = beta_cdf(t, a, b)
+        for tt, yy in zip(t, y):
+            rows.append(dict(project=f"CUSTOM-{i}", cost_type="TPC",
+                              cum_pct_schedule=float(tt), cum_pct_cost=float(yy)))
+    pd.DataFrame(rows).to_csv(csv_path, index=False)
+
+    monkeypatch.setattr("sys.argv", ["phasing_analysis.py", "--data", str(csv_path)])
+    pipeline_main()
+
+    assert config.DATA_PATH == csv_path
+    fits = pd.read_csv(config.OUTPUT_DIR / config.FITS_FILENAME)
+    assert set(fits["project"]) == {f"CUSTOM-{i}" for i in range(6)}
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))
