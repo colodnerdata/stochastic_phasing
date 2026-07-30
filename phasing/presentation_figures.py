@@ -629,8 +629,10 @@ def fig05_mixture(inp: Inputs, cfg: SimConfig, out: Path, sim: SimResult) -> Non
                 color=NAVY, fontweight="bold", fontsize=11)
     ax.set_xlabel(f"{lab} spend ($M), runs still active")
     ax.set_ylabel("Iterations")
+    ax.set_ylim(bottom=0)
     ax.set_title("Continuous part (conditional on active)",
                  fontsize=11.5, fontweight="bold")
+    ax.grid(False)
     fig.suptitle(f"{lab} annual spend is a MIXTURE: point mass at $0 + continuous lobe",
                  fontsize=12.5, fontweight="bold", color=DEEP, y=0.995)
     lo, hi = cfg.duration_clip
