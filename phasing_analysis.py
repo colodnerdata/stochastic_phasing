@@ -1,7 +1,8 @@
 """
 Stochastic Cost Phasing Analysis — Pipeline
 ============================================
-Loads `data.csv` from this directory and runs:
+Loads `data.csv` from this directory (or the path passed via --data) and
+runs:
 
   1. Load & validate (column resolution, scaling, chronological sort)
   2. Data-quality screening (monotonicity exclusion, min-points, bound-contact)
@@ -32,6 +33,8 @@ Usage:
   python phasing_analysis.py            # full run, TPC as primary stratum
   python phasing_analysis.py --duration 36   # change example forecast duration
   python phasing_analysis.py --param both    # + mean-precision parameterization
+  python phasing_analysis.py --data path/to/other.csv   # run against a
+                                                          # different dataset
 
 Requires: numpy, pandas, scipy, matplotlib
 

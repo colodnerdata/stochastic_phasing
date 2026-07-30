@@ -116,7 +116,7 @@ def load_and_validate() -> tuple[pd.DataFrame, dict]:
 
     if not config.DATA_PATH.exists():
         print(f"ERROR: {config.DATA_PATH} not found. "
-              "Place data.csv next to the repo root.")
+              "Place data.csv next to the repo root, or pass --data <path>.")
         sys.exit(1)
 
     df = pd.read_csv(config.DATA_PATH)
