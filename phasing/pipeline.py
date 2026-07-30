@@ -43,7 +43,7 @@ def main():
     ap.add_argument("--presentation", action="store_true",
                     help="Also generate the deck figures (f01-f09, see "
                     "phasing/presentation_figures.py) from this run's fitted "
-                    "results, into OUTPUT_DIR/presentation/. Uses "
+                    "results, into OUTPUT_DIR/presentation_figures/. Uses "
                     f"{config.PRIMARY_COST_TYPE} as the featured stratum.")
     ap.add_argument("--pres-duration-median", type=float,
                     default=presentation_figures.SimConfig.duration_median,
@@ -171,7 +171,7 @@ def main():
             inp = presentation_figures.build_inputs(
                 fits_for_stage2, dists, config.PRIMARY_COST_TYPE)
             presentation_figures.generate_figures(
-                inp, pres_cfg, config.OUTPUT_DIR / "presentation",
+                inp, pres_cfg, config.OUTPUT_DIR / "presentation_figures",
                 rng=np.random.default_rng(config.RNG_SEED))
         else:
             print(f"WARNING: {config.PRIMARY_COST_TYPE} not in Stage-2-eligible "
