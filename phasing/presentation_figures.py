@@ -825,6 +825,7 @@ def fig09_per_formula(inp: Inputs, cfg: SimConfig, out: Path) -> None:
     ax.set_ylabel("$f(t)$", fontsize=11)
     ax.set_title("Area of each strip = that year's phasing percentage",
                  fontsize=11.5, fontweight="bold", color=DEEP, pad=8)
+    ax.grid(False)
 
     ax = fig.add_subplot(gs[1, 1])
     xs = np.arange(ny)
@@ -839,10 +840,11 @@ def fig09_per_formula(inp: Inputs, cfg: SimConfig, out: Path) -> None:
     ax.set_ylim(0, max(ann * 100) * 1.32)
     ax.text(.985, .86, f"sums to {ann.sum() * 100:.0f}%", transform=ax.transAxes,
             ha="right", fontsize=10.5, color=CRIM, fontweight="bold")
+    ax.grid(False)
 
     fig.suptitle(f"Worked example: $\\alpha$={A:.2f}, $\\beta$={B:.2f}, "
                  f"D={d_months} months ({ny} fiscal years of equal length)",
-                 fontsize=11, color=SLATE, y=0.975)
+                 fontsize=11, color=SLATE, y=1.03)
     _save(fig, out, "f09_per_formula", inp, tight=True)
 
 
