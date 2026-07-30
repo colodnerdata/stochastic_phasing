@@ -638,7 +638,7 @@ def fig05_mixture(inp: Inputs, cfg: SimConfig, out: Path, sim: SimResult) -> Non
              f"Notional duration: D ~ LogNormal(median={cfg.duration_median:.0f} mo, "
              f"σ={cfg.duration_sigma:.2f}), clipped to [{lo:.0f}, {hi:.0f}] mo",
              ha="center", fontsize=9.5, color=SLATE, style="italic")
-    fig.tight_layout(rect=[0, 0, 1, 0.87])
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
     _save(fig, out, "f05_mixture", inp)
 
 
