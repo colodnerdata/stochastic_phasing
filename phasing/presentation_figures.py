@@ -629,8 +629,11 @@ def fig05_mixture(inp: Inputs, cfg: SimConfig, out: Path, sim: SimResult) -> Non
                 color=NAVY, fontweight="bold", fontsize=11)
     ax.set_xlabel(f"{lab} spend ($M), runs still active")
     ax.set_ylabel("Iterations")
+    ax.set_xlim(0, 150)
+    ax.set_ylim(bottom=0)
     ax.set_title("Continuous part (conditional on active)",
                  fontsize=11.5, fontweight="bold")
+    ax.grid(False)
     fig.suptitle(f"{lab} annual spend is a MIXTURE: point mass at $0 + continuous lobe",
                  fontsize=12.5, fontweight="bold", color=DEEP, y=0.995)
     lo, hi = cfg.duration_clip
@@ -638,7 +641,7 @@ def fig05_mixture(inp: Inputs, cfg: SimConfig, out: Path, sim: SimResult) -> Non
              f"Notional duration: D ~ LogNormal(median={cfg.duration_median:.0f} mo, "
              f"σ={cfg.duration_sigma:.2f}), clipped to [{lo:.0f}, {hi:.0f}] mo",
              ha="center", fontsize=9.5, color=SLATE, style="italic")
-    fig.tight_layout(rect=[0, 0, 1, 0.87])
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
     _save(fig, out, "f05_mixture", inp)
 
 
@@ -825,6 +828,7 @@ def fig09_per_formula(inp: Inputs, cfg: SimConfig, out: Path) -> None:
     ax.set_ylabel("$f(t)$", fontsize=11)
     ax.set_title("Area of each strip = that year's phasing percentage",
                  fontsize=11.5, fontweight="bold", color=DEEP, pad=8)
+    ax.grid(False)
 
     ax = fig.add_subplot(gs[1, 1])
     xs = np.arange(ny)
@@ -839,10 +843,11 @@ def fig09_per_formula(inp: Inputs, cfg: SimConfig, out: Path) -> None:
     ax.set_ylim(0, max(ann * 100) * 1.32)
     ax.text(.985, .86, f"sums to {ann.sum() * 100:.0f}%", transform=ax.transAxes,
             ha="right", fontsize=10.5, color=CRIM, fontweight="bold")
+    ax.grid(False)
 
     fig.suptitle(f"Worked example: $\\alpha$={A:.2f}, $\\beta$={B:.2f}, "
                  f"D={d_months} months ({ny} fiscal years of equal length)",
-                 fontsize=11, color=SLATE, y=0.975)
+                 fontsize=11, color=SLATE, y=1.03)
     _save(fig, out, "f09_per_formula", inp, tight=True)
 
 
