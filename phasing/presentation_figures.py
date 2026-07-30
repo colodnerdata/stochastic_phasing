@@ -657,8 +657,8 @@ def fig06_quantile_bars(inp: Inputs, cfg: SimConfig, out: Path, sim: SimResult) 
         f0 = int(below[0])
         ax.axvspan(f0 - 0.5, cfg.n_fy - 0.5, color=CRIM, alpha=0.07)
         ax.annotate(f"P50 = $0 from {sim.fy_labels[f0]} onward,\n"
-                    f"but P90 is still ${q90[f0]:.0f}M",
-                    xy=(f0, q90[f0]), xytext=(max(f0 , 0.1), q90[f0] + 38),
+                    f"but P85 is still ${q85[f0]:.0f}M",
+                    xy=(f0, q85[f0]), xytext=(max(f0 , 0.1), q85[f0] + 38),
                     fontsize=10.5, color=CRIM, fontweight="bold",
                     arrowprops=dict(arrowstyle="->", color=CRIM, lw=1.6))
     ax.set_xticks(x)
@@ -743,13 +743,13 @@ def fig08_fan_annotated(inp: Inputs, cfg: SimConfig, out: Path, sim: SimResult) 
     ax.axvline(d50, color=NAVY, ls=":", lw=2.4,
                label=f"Median completion \u2014 month {d50:.0f}")
     ax.axvline(d85, color=GOLD, ls=":", lw=2.4,
-               label=f"P95 completion \u2014 month {d85:.0f}")
+               label=f"P85 completion \u2014 month {d85:.0f}")
 
     ytop = ax.get_ylim()[1]
     ya = ytop * 0.13
     ax.annotate("", xy=(d50, ya), xytext=(d85, ya),
                 arrowprops=dict(arrowstyle="<->", color=CRIM, lw=2.2))
-    ax.text((d50 + 85) / 2, ya * 1.28, f"schedule risk: {d85 - d50:.0f} months",
+    ax.text((d50 + d85) / 2, ya * 1.28, f"schedule risk\n{d85 - d50:.0f} months",
             ha="center", color=CRIM, fontweight="bold", fontsize=10.5)
     ax.set_xlabel("Month")
     ax.set_ylabel("Cumulative spend ($M)")
