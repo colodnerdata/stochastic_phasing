@@ -629,6 +629,7 @@ def fig05_mixture(inp: Inputs, cfg: SimConfig, out: Path, sim: SimResult) -> Non
                 color=NAVY, fontweight="bold", fontsize=11)
     ax.set_xlabel(f"{lab} spend ($M), runs still active")
     ax.set_ylabel("Iterations")
+    ax.set_xlim(0, 150)
     ax.set_ylim(bottom=0)
     ax.set_title("Continuous part (conditional on active)",
                  fontsize=11.5, fontweight="bold")
