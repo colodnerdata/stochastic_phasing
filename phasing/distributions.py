@@ -10,24 +10,44 @@ from __future__ import annotations
 
 import json
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
+from scipy.special import expit
 
 from . import config
 from .fitting import beta_cdf
+from .parameterization import mu_nu_to_ab
 
 
-def fit_joint_distributions(fits_for_stage2: pd.DataFrame) -> dict:
+def fit_joint_distributions(fits_for_stage2: pd.DataFrame,
+                            include_munu: bool = False) -> dict:
+    """Fit bivariate-normal population models to the per-curve estimates.
+
+    Parameters
+    ----------
+    fits_for_stage2 : pd.DataFrame
+    include_munu : bool, default False
+        If True (requires fits from fit_all_curves(keep_mu_nu=True)), also
+        fit "bvn_munu": (logit mu, log nu) ~ BVN(m, S). Both coordinates are
+        already unbounded, so sampling from it needs no truncation or
+        rejection. Default False reproduces the original two-entry dict
+        (and distributions.json) exactly.
+    """
     print("\n" + "=" * 70)
     print("STAGE 5: JOINT DISTRIBUTION FITS")
     print("=" * 70)
 
     dists = {"bvn_unit": [], "bvn_log": []}
+    if include_munu:
+        dists["bvn_munu"] = []
     for ct, sub in fits_for_stage2.groupby("cost_type"):
         data_u = sub[["alpha", "beta"]].values
         data_l = np.log(data_u)
-        for key, d in (("bvn_unit", data_u), ("bvn_log", data_l)):
+        spaces = [("bvn_unit", data_u), ("bvn_log", data_l)]
+        if include_munu:
+            spaces.append(("bvn_munu", sub[["logit_mu", "log_nu"]].values))
+        for key, d in spaces:
             mean = d.mean(axis=0)
             cov = np.cov(d.T)
             sd = np.sqrt(np.diag(cov))
@@ -47,6 +67,11 @@ def fit_joint_distributions(fits_for_stage2: pd.DataFrame) -> dict:
               f"σ=({u['sigma'][0]:.3f},{u['sigma'][1]:.3f}) ρ={u['rho']:+.3f}")
         print(f"  Log  BVN: μ=({l['mu'][0]:.3f},{l['mu'][1]:.3f}) "
               f"σ=({l['sigma'][0]:.3f},{l['sigma'][1]:.3f}) ρ={l['rho']:+.3f}")
+        if include_munu:
+            m = dists["bvn_munu"][-1]
+            print(f"  MuNu BVN: μ=({m['mu'][0]:.3f},{m['mu'][1]:.3f}) "
+                  f"σ=({m['sigma'][0]:.3f},{m['sigma'][1]:.3f}) ρ={m['rho']:+.3f}"
+                  "  [(logit mu, log nu) space]")
 
     with open(config.OUTPUT_DIR / config.DISTRIBUTIONS_FILENAME, "w") as f:
         json.dump(dists, f, indent=2)
@@ -61,10 +86,19 @@ class PhasingPredictor:
     Default model 'bvn_log': (ln α, ln β) ~ BVN  (bivariate lognormal).
     Guarantees positive parameters; captures correlation; right-skew friendly.
     'bvn_unit' samples in unit space with rejection for positivity.
+    'bvn_munu' samples (logit μ, ln ν) ~ BVN, then inverts through
+    (mu_nu_to_ab); both coordinates are already unbounded so no rejection
+    is needed and the resulting alpha, beta are guaranteed positive.
     """
 
     def __init__(self, dists: dict, model: str = "bvn_log",
                  rng: np.random.Generator | None = None):
+        if model not in dists:
+            raise KeyError(
+                f"PhasingPredictor: model {model!r} not in dists "
+                f"(available: {list(dists)}); for 'bvn_munu' rerun with "
+                "--param munu or --param both"
+            )
         self.model = model
         self.params = {p["cost_type"]: p for p in dists[model]}
         self.rng = rng or np.random.default_rng(config.RNG_SEED)
@@ -75,6 +109,11 @@ class PhasingPredictor:
         if self.model == "bvn_log":
             z = self.rng.multivariate_normal(mu, cov, size=n)
             ab = np.exp(z)
+        elif self.model == "bvn_munu":
+            z = self.rng.multivariate_normal(mu, cov, size=n)
+            mu_s, nu_s = expit(z[:, 0]), np.exp(z[:, 1])
+            alpha_s, beta_s = mu_nu_to_ab(mu_s, nu_s)
+            ab = np.column_stack([alpha_s, beta_s])
         else:  # bvn_unit with rejection for positivity
             out = []
             need = n

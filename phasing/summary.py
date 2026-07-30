@@ -15,7 +15,16 @@ from . import config
 
 def write_summary(fits: pd.DataFrame, fits_for_stage2: pd.DataFrame,
                   corr: pd.DataFrame, dists: dict, duration: int,
-                  screening_counts: dict):
+                  screening_counts: dict, decomp: pd.DataFrame | None = None):
+    """
+    Parameters
+    ----------
+    decomp : pd.DataFrame or None, default None
+        Output of correlation.decompose_correlation() for space in
+        {"ab", "munu"}, concatenated. When provided, adds a "CORRELATION
+        DECOMPOSITION" section. Default None reproduces the original
+        summary.txt exactly.
+    """
     lines = []
     w = lines.append
     w("=" * 70)
@@ -88,6 +97,22 @@ def write_summary(fits: pd.DataFrame, fits_for_stage2: pd.DataFrame,
                 w(f"  {ct}: insufficient vintage variation to test")
         w("  (Significant drift would argue for weighting recent projects")
         w("   or adding vintage as a covariate; otherwise pooling is fine.)")
+    if decomp is not None and not decomp.empty:
+        w("")
+        w("CORRELATION DECOMPOSITION (estimator-induced vs population):")
+        w("  observed_r = population_r + estimator_r component (method of")
+        w("  moments: population_cov_hat = observed_cov - mean(per-curve pcov)).")
+        w("  Beta Fisher information has a strictly negative off-diagonal, so")
+        w("  Cov(alpha_hat, beta_hat) > 0 is manufactured by the estimator on")
+        w("  top of any true population correlation.")
+        w("")
+        w(decomp.to_string(index=False))
+        for _, r in decomp.iterrows():
+            if r["non_pd_flag"]:
+                w(f"  WARNING [{r['space']}] {r['cost_type']}: subtracting the "
+                  f"estimator component left a non-PD matrix -- population_r "
+                  f"is not identified from n={r['n']} curves; falling back to "
+                  f"the uncorrected observed_r={r['fallback_r']:+.3f}.")
     w("")
     w("RECOMMENDED PREDICTIVE MODEL: bvn_log (bivariate lognormal)")
     w("  Sample (ln α, ln β) ~ BVN(μ, Σ); exponentiate; evaluate Beta CDF at")
