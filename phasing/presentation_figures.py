@@ -19,7 +19,7 @@ Usage
 
     # standalone, from a previous run's output files; TPC stratum
     python -m phasing.presentation_figures --fits outputs/fits.csv \
-        --dists outputs/distributions.json --cost-type TPC --out fig/
+        --dists outputs/distributions.json --cost-type TPC --out presentation_figures/
 
     # tune the companion cost/schedule models used by the Monte Carlo figures
     python -m phasing.presentation_figures --fits outputs/fits.csv \
@@ -28,7 +28,7 @@ Usage
         --cost-median 420 --cost-sigma 0.18 --n-fy 10
 
     # illustrative mode (no inputs) -- every figure is watermarked
-    python -m phasing.presentation_figures --out fig/
+    python -m phasing.presentation_figures --out presentation_figures/
 
     # single figure while iterating
     python -m phasing.presentation_figures --fits ... --dists ... --only f07
@@ -930,7 +930,8 @@ def main() -> None:
     p.add_argument("--fits", help="fits.csv from phasing_analysis.py")
     p.add_argument("--dists", help="distributions.json from phasing_analysis.py")
     p.add_argument("--cost-type", default="TPC", help="stratum to feature (default TPC)")
-    p.add_argument("--out", default="fig", help="output directory (default fig/)")
+    p.add_argument("--out", default="presentation_figures",
+                   help="output directory (default presentation_figures/)")
     p.add_argument("--only", nargs="*", choices=sorted(FIGURES),
                    help="generate only these figures")
     p.add_argument("--duration-median", type=float, default=SimConfig.duration_median)

@@ -464,7 +464,7 @@ def test_build_inputs_prefers_bvn_log_and_falls_back_to_fits():
 
 def test_cli_presentation_flag_writes_figures(tmp_path, monkeypatch):
     """--presentation on a --data run must render all nine deck figures from
-    that run's in-memory fits into OUTPUT_DIR/presentation/."""
+    that run's in-memory fits into OUTPUT_DIR/presentation_figures/."""
     from phasing.pipeline import main as pipeline_main
 
     monkeypatch.setattr(config, "DATA_PATH", config.DATA_PATH)
@@ -487,7 +487,7 @@ def test_cli_presentation_flag_writes_figures(tmp_path, monkeypatch):
     ])
     pipeline_main()
 
-    pres_dir = config.OUTPUT_DIR / "presentation"
+    pres_dir = config.OUTPUT_DIR / "presentation_figures"
     expected = [
         "f01_curve_fan.png", "f02_beta_atlas.png", "f03_scatter_ellipse.png",
         "f03a_scatter_ellipse_munu.png",
