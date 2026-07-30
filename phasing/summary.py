@@ -141,5 +141,5 @@ def write_summary(fits: pd.DataFrame, fits_for_stage2: pd.DataFrame,
 
     text = "\n".join(lines)
     print(config.OUTPUT_DIR)
-    (config.OUTPUT_DIR / config.SUMMARY_FILENAME).write_text(text)
+    (config.OUTPUT_DIR / config.SUMMARY_FILENAME).write_text(text, encoding = "utf-8")
     print("\n" + text)
