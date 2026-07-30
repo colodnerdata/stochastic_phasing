@@ -12,12 +12,12 @@ from __future__ import annotations
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from matplotlib.patches import Ellipse
-from scipy.stats import chi2, pearsonr
+from scipy.stats import pearsonr
 
 from . import config
 from .fitting import beta_cdf
 from .style import color_for as _color_for
+from .style import conf_ellipse as _add_conf_ellipse
 from .style import ordered_types as _ordered_types
 
 
@@ -65,22 +65,6 @@ def plot_curve_overlays(df: pd.DataFrame, fits: pd.DataFrame):
     fig.savefig(config.OUTPUT_DIR / "01_curve_overlays.png", dpi=150,
                 bbox_inches="tight")
     plt.close(fig)
-
-
-def _add_conf_ellipse(ax, x, y, color, q=0.95, **kw):
-    if len(x) < 3:
-        return
-    data = np.column_stack([x, y])
-    mean = data.mean(axis=0)
-    cov = np.cov(data.T)
-    evals, evecs = np.linalg.eigh(cov)
-    order = evals.argsort()[::-1]
-    evals, evecs = evals[order], evecs[:, order]
-    angle = np.degrees(np.arctan2(evecs[1, 0], evecs[0, 0]))
-    c = chi2.ppf(q, df=2)
-    w, h = 2 * np.sqrt(c * evals[0]), 2 * np.sqrt(c * evals[1])
-    ax.add_patch(Ellipse(mean, w, h, angle=angle, facecolor=color, alpha=0.12,
-                         edgecolor=color, lw=2, ls="--", **kw))
 
 
 def plot_scatter_ellipses(fits: pd.DataFrame):

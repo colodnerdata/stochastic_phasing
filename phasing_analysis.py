@@ -28,6 +28,9 @@ Outputs written to ./outputs/ next to this script:
   cross-parameterization verification, a correlation decomposition
   (extra columns in correlations.csv + a summary.txt section), and
   06_munu_scatter.png)
+  (--presentation additionally renders the deck figures f01..f09 into
+  ./outputs/presentation/ from this run's fitted results; tune the
+  companion cost/schedule models with the --pres-* flags)
 
 Usage:
   python phasing_analysis.py            # full run, TPC as primary stratum
@@ -35,6 +38,8 @@ Usage:
   python phasing_analysis.py --param both    # + mean-precision parameterization
   python phasing_analysis.py --data path/to/other.csv   # run against a
                                                           # different dataset
+  python phasing_analysis.py --data other.csv --presentation   # + deck figures
+                                                # (phasing/presentation_figures.py)
 
 Requires: numpy, pandas, scipy, matplotlib
 

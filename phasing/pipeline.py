@@ -20,6 +20,7 @@ from . import (
     distributions,
     eda,
     fitting,
+    presentation_figures,
     screening,
     summary,
     verification,
@@ -39,6 +40,35 @@ def main():
     ap.add_argument("--model", choices=["bvn_log", "bvn_unit", "bvn_munu"],
                     default="bvn_log", help="Predictor sampling model "
                     "('bvn_munu' requires --param munu or --param both)")
+    ap.add_argument("--presentation", action="store_true",
+                    help="Also generate the deck figures (f01-f09, see "
+                    "phasing/presentation_figures.py) from this run's fitted "
+                    "results, into OUTPUT_DIR/presentation/. Uses "
+                    f"{config.PRIMARY_COST_TYPE} as the featured stratum.")
+    ap.add_argument("--pres-duration-median", type=float,
+                    default=presentation_figures.SimConfig.duration_median,
+                    help="Deck figures: companion schedule model, median "
+                    "duration in months (default %(default)s)")
+    ap.add_argument("--pres-duration-sigma", type=float,
+                    default=presentation_figures.SimConfig.duration_sigma,
+                    help="Deck figures: companion schedule model, lognormal "
+                    "sigma (default %(default)s)")
+    ap.add_argument("--pres-cost-median", type=float,
+                    default=presentation_figures.SimConfig.cost_median,
+                    help="Deck figures: companion cost model, median total "
+                    "cost in $M (default %(default)s)")
+    ap.add_argument("--pres-cost-sigma", type=float,
+                    default=presentation_figures.SimConfig.cost_sigma,
+                    help="Deck figures: companion cost model, lognormal "
+                    "sigma (default %(default)s)")
+    ap.add_argument("--pres-n-iter", type=int,
+                    default=presentation_figures.SimConfig.n_iter,
+                    help="Deck figures: Monte Carlo iterations "
+                    "(default %(default)s)")
+    ap.add_argument("--pres-n-fy", type=int,
+                    default=presentation_figures.SimConfig.n_fy,
+                    help="Deck figures: fiscal years shown "
+                    "(default %(default)s)")
     ap.add_argument("--param", choices=["ab", "munu", "both"], default="ab",
                     help="Parameterization mode. 'ab' (default) reproduces "
                     "current behavior exactly. 'munu' also adds mean-"
@@ -123,6 +153,29 @@ def main():
     else:
         print(f"WARNING: {config.PRIMARY_COST_TYPE} not in Stage-2-eligible "
               f"data; skipping prediction.")
+
+    if args.presentation:
+        print("\n" + "=" * 70)
+        print("STAGE 5b: PRESENTATION FIGURES")
+        print("=" * 70)
+        if config.PRIMARY_COST_TYPE in fits_for_stage2["cost_type"].values:
+            pres_cfg = presentation_figures.SimConfig(
+                duration_median=args.pres_duration_median,
+                duration_sigma=args.pres_duration_sigma,
+                cost_median=args.pres_cost_median,
+                cost_sigma=args.pres_cost_sigma,
+                n_iter=args.pres_n_iter,
+                n_fy=args.pres_n_fy,
+                seed=config.RNG_SEED,
+            )
+            inp = presentation_figures.build_inputs(
+                fits_for_stage2, dists, config.PRIMARY_COST_TYPE)
+            presentation_figures.generate_figures(
+                inp, pres_cfg, config.OUTPUT_DIR / "presentation",
+                rng=np.random.default_rng(config.RNG_SEED))
+        else:
+            print(f"WARNING: {config.PRIMARY_COST_TYPE} not in Stage-2-eligible "
+                  f"data; skipping presentation figures.")
 
     summary.write_summary(fits, fits_for_stage2, corr, dists, args.duration,
                           screening_counts, decomp=decomp)

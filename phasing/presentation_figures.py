@@ -14,21 +14,24 @@ placeholder figures cannot silently end up in a briefing package.
 
 Usage
 -----
-    # real data, TPC stratum
-    python phasing_figures.py --fits outputs/fits.csv \
-                              --dists outputs/distributions.json \
-                              --cost-type TPC --out fig/
+    # easiest: as part of a pipeline run, straight from that run's fits
+    python phasing_analysis.py --data path/to/data.csv --presentation
+
+    # standalone, from a previous run's output files; TPC stratum
+    python -m phasing.presentation_figures --fits outputs/fits.csv \
+        --dists outputs/distributions.json --cost-type TPC --out fig/
 
     # tune the companion cost/schedule models used by the Monte Carlo figures
-    python phasing_figures.py --fits outputs/fits.csv --dists outputs/distributions.json \
+    python -m phasing.presentation_figures --fits outputs/fits.csv \
+        --dists outputs/distributions.json \
         --duration-median 62 --duration-sigma 0.30 \
         --cost-median 420 --cost-sigma 0.18 --n-fy 10
 
     # illustrative mode (no inputs) -- every figure is watermarked
-    python phasing_figures.py --out fig/
+    python -m phasing.presentation_figures --out fig/
 
     # single figure while iterating
-    python phasing_figures.py --fits ... --dists ... --only f07
+    python -m phasing.presentation_figures --fits ... --dists ... --only f07
 
 Figures
 -------
@@ -58,10 +61,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib.gridspec import GridSpec
-from matplotlib.patches import Ellipse
-from scipy.special import betainc
 from scipy.stats import beta as sbeta
-from scipy.stats import chi2
+
+from .fitting import beta_cdf as bcdf
+from .style import conf_ellipse
 
 # ============================================================================
 # Palette -- matches the CECOP dark-theme template
@@ -178,6 +181,56 @@ def _illustrative_inputs(rng: np.random.Generator, cost_type: str) -> Inputs:
         notes=["no fits.csv / distributions.json supplied -- illustrative population"],
     )
 
+def build_inputs(fits: pd.DataFrame, dists: dict | None, cost_type: str,
+                 notes: list[str] | None = None) -> Inputs:
+    """Build figure inputs from in-memory pipeline results.
+
+    Parameters
+    ----------
+    fits : pd.DataFrame
+        Fitted curves with positive alpha/beta and a cost_type column. The
+        pipeline passes its Stage-2-screened fits (bound-contact excluded);
+        `load_inputs` applies the equivalent cleanup to a raw fits.csv first.
+    dists : dict or None
+        Output of `distributions.fit_joint_distributions` (or the parsed
+        distributions.json). Only the ``bvn_log`` entry is usable here --
+        ``bvn_unit``/``bvn_munu`` parameters live in other coordinate systems
+        and cannot be exponentiated into (alpha, beta). If no ``bvn_log``
+        entry matches, the population is estimated from the fitted curves.
+    cost_type : str
+        Stratum to feature (e.g. "TPC").
+    """
+    notes = list(notes or [])
+    fits = fits.copy()
+    fits["cost_type"] = fits["cost_type"].astype(str).str.strip().str.upper()
+    sub = fits[fits["cost_type"] == cost_type.upper()]
+    if sub.empty:
+        raise SystemExit(
+            f"No fitted curves for cost_type={cost_type!r}. "
+            f"Available: {sorted(fits['cost_type'].unique())}"
+        )
+
+    alpha = sub["alpha"].to_numpy(float)
+    beta = sub["beta"].to_numpy(float)
+
+    mu_ln = cov_ln = None
+    for entry in (dists or {}).get("bvn_log", []):
+        if str(entry.get("cost_type", "")).upper() == cost_type.upper():
+            mu_ln = np.asarray(entry["mu"], float)
+            cov_ln = np.asarray(entry["cov"], float)
+            break
+
+    if mu_ln is None:
+        d = np.column_stack([np.log(alpha), np.log(beta)])
+        mu_ln, cov_ln = d.mean(0), np.cov(d.T)
+        notes.append("population estimated from fitted curves "
+                     "(no usable bvn_log distribution entry)")
+
+    return Inputs(alpha=alpha, beta=beta, mu_ln=mu_ln, cov_ln=cov_ln,
+                  cost_type=cost_type.upper(), illustrative=False,
+                  all_fits=fits, notes=notes)
+
+
 def load_inputs(fits_path: str | None, dists_path: str | None, cost_type: str,
                 rng: np.random.Generator) -> Inputs:
     """Load fitted curves and population parameters, falling back to illustrative.
@@ -196,9 +249,7 @@ def load_inputs(fits_path: str | None, dists_path: str | None, cost_type: str,
         return _illustrative_inputs(rng, cost_type)
 
     fits = pd.read_csv(fits_path)
-    if "cost_type" in fits.columns:
-        fits["cost_type"] = fits["cost_type"].astype(str).str.strip().str.upper()
-    else:
+    if "cost_type" not in fits.columns:
         fits["cost_type"] = cost_type
 
     notes: list[str] = []
@@ -216,38 +267,11 @@ def load_inputs(fits_path: str | None, dists_path: str | None, cost_type: str,
     if len(fits) < n0:
         notes.append(f"using {len(fits)} of {n0} fitted curves")
 
-    sub = fits[fits["cost_type"] == cost_type.upper()]
-    if sub.empty:
-        raise SystemExit(
-            f"No rows for cost_type={cost_type!r} in {fits_path}. "
-            f"Available: {sorted(fits['cost_type'].unique())}"
-        )
-
-    alpha = sub["alpha"].to_numpy(float)
-    beta = sub["beta"].to_numpy(float)
-
-    mu_ln = cov_ln = None
+    dists = None
     if dists_path and Path(dists_path).exists():
         dists = json.loads(Path(dists_path).read_text())
-        for key in ("bvn_log", "bvn_munu", "bvn_unit"):
-            for entry in dists.get(key, []):
-                if str(entry.get("cost_type", "")).upper() == cost_type.upper():
-                    if key != "bvn_log":
-                        notes.append(f"distributions.json had no bvn_log; used {key}")
-                    mu_ln = np.asarray(entry["mu"], float)
-                    cov_ln = np.asarray(entry["cov"], float)
-                    break
-            if mu_ln is not None:
-                break
 
-    if mu_ln is None:
-        d = np.column_stack([np.log(alpha), np.log(beta)])
-        mu_ln, cov_ln = d.mean(0), np.cov(d.T)
-        notes.append("population estimated from fits.csv (no usable distributions.json)")
-
-    return Inputs(alpha=alpha, beta=beta, mu_ln=mu_ln, cov_ln=cov_ln,
-                  cost_type=cost_type.upper(), illustrative=False,
-                  all_fits=fits, notes=notes)
+    return build_inputs(fits, dists, cost_type, notes=notes)
 
 # ============================================================================
 # Simulation shared by figures 4-8
@@ -267,10 +291,6 @@ class SimResult:
     duration: np.ndarray
     cost: np.ndarray
     fy_labels: list[str]
-
-def bcdf(t, a, b):
-    """Beta CDF, broadcasting over t and the shape parameters."""
-    return betainc(a, b, np.clip(t, 0.0, 1.0))
 
 def simulate(inp: Inputs, cfg: SimConfig, rng: np.random.Generator) -> SimResult:
     """Couple cost, duration, and phasing shape into fiscal-year spend streams."""
@@ -323,21 +343,6 @@ def _save(fig, out: Path, name: str, inp: Inputs, tight: bool = False) -> Path:
     plt.close(fig)
     print(f" wrote {path}")
     return path
-
-def conf_ellipse(ax, x, y, color, q: float = 0.95, **kw) -> None:
-    """Add a q-level confidence ellipse under a bivariate normal approximation."""
-    if len(x) < 3:
-        return
-    d = np.column_stack([x, y])
-    mean, cov = d.mean(0), np.cov(d.T)
-    evals, evecs = np.linalg.eigh(cov)
-    order = evals.argsort()[::-1]
-    evals, evecs = evals[order], evecs[:, order]
-    angle = np.degrees(np.arctan2(evecs[1, 0], evecs[0, 0]))
-    k = chi2.ppf(q, df=2)
-    ax.add_patch(Ellipse(mean, 2 * np.sqrt(k * evals[0]), 2 * np.sqrt(k * evals[1]),
-                         angle=angle, facecolor=color, alpha=0.12, edgecolor=color,
-                         lw=2, ls="--", **kw))
 
 def _color_for(cost_type: str, i: int = 0) -> str:
     return COST_TYPE_COLOR.get(cost_type.upper(), FALLBACK_CYCLE[i % len(FALLBACK_CYCLE)])
@@ -769,6 +774,69 @@ FIGURES = {
 NEEDS_SIM = {"f04", "f05", "f06", "f07", "f08"}
 
 
+def generate_figures(inp: Inputs, cfg: SimConfig, out: Path,
+                     rng: np.random.Generator | None = None,
+                     only: set[str] | None = None) -> None:
+    """Render the requested deck figures (all of them by default) into `out`.
+
+    Shared by the standalone CLI below and the pipeline's --presentation
+    stage. The deck's global matplotlib style is applied inside an
+    rc_context so it does not leak into figures the caller renders later.
+    """
+    out.mkdir(parents=True, exist_ok=True)
+    rng = rng or np.random.default_rng(cfg.seed)
+
+    print(f"stratum : {inp.cost_type}")
+    print(f"curves : {len(inp.alpha)}")
+    print(f"population mu : ln alpha {inp.mu_ln[0]:+.4f}, ln beta {inp.mu_ln[1]:+.4f}")
+    sd = np.sqrt(np.diag(inp.cov_ln))
+    rho = inp.cov_ln[0, 1] / (sd[0] * sd[1]) if sd.prod() > 0 else 0.0
+    print(f"population sd : {sd[0]:.4f}, {sd[1]:.4f} rho {rho:+.4f}")
+    for n in inp.notes:
+        print(f" note: {n}")
+    if inp.illustrative:
+        print("\n *** ILLUSTRATIVE MODE -- figures will be watermarked ***")
+        print(" *** supply --fits and --dists to use fitted values ***")
+    print()
+
+    wanted = set(only) if only else set(FIGURES)
+    sim = None
+    if wanted & NEEDS_SIM:
+        print(f"simulating {cfg.n_iter:,} iterations ...")
+        sim = simulate(inp, cfg, rng)
+        print(f" median duration {np.median(sim.duration):.0f} mo, "
+              f"P95 {np.percentile(sim.duration, 95):.0f} mo")
+        print(" P(active): " + " ".join(
+            f"{l}={v:.2f}" for l, v in zip(sim.fy_labels, sim.p_active)))
+        print()
+
+    with plt.rc_context():
+        apply_style()
+        print("figures:")
+        if "f01" in wanted:
+            fig01_curve_fan(inp, cfg, out)
+        if "f02" in wanted:
+            fig02_beta_atlas(inp, cfg, out)
+        if "f03" in wanted:
+            fig03_scatter_ellipse(inp, cfg, out)
+        if "f04" in wanted:
+            fig04_coupling(inp, cfg, out, sim)
+        if "f05" in wanted:
+            fig05_mixture(inp, cfg, out, sim)
+        if "f06" in wanted:
+            fig06_quantile_bars(inp, cfg, out, sim)
+        if "f07" in wanted:
+            fig07_conditional(inp, cfg, out, sim)
+        if "f08" in wanted:
+            fig08_fan_annotated(inp, cfg, out, sim)
+        if "f09" in wanted:
+            fig09_per_formula(inp, cfg, out)
+
+    print(f"\ndone -> {out.resolve()}")
+    if inp.illustrative:
+        print("REMINDER: these figures are watermarked ILLUSTRATIVE.")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -794,62 +862,14 @@ def main() -> None:
                     cost_median=args.cost_median, cost_sigma=args.cost_sigma,
                     n_iter=args.n_iter, n_fy=args.n_fy, max_month=args.max_month,
                     mixture_fy=args.mixture_fy, seed=args.seed)
-    out = Path(args.out)
-    out.mkdir(parents=True, exist_ok=True)
-    apply_style()
     rng = np.random.default_rng(cfg.seed)
 
     print("=" * 70)
     print("PHASING DECK FIGURES")
     print("=" * 70)
     inp = load_inputs(args.fits, args.dists, args.cost_type, rng)
-    print(f"stratum : {inp.cost_type}")
-    print(f"curves : {len(inp.alpha)}")
-    print(f"population mu : ln alpha {inp.mu_ln[0]:+.4f}, ln beta {inp.mu_ln[1]:+.4f}")
-    sd = np.sqrt(np.diag(inp.cov_ln))
-    rho = inp.cov_ln[0, 1] / (sd[0] * sd[1]) if sd.prod() > 0 else 0.0
-    print(f"population sd : {sd[0]:.4f}, {sd[1]:.4f} rho {rho:+.4f}")
-    for n in inp.notes:
-        print(f" note: {n}")
-    if inp.illustrative:
-        print("\n *** ILLUSTRATIVE MODE -- figures will be watermarked ***")
-        print(" *** supply --fits and --dists to use fitted values ***")
-    print()
-
-    wanted = set(args.only) if args.only else set(FIGURES)
-    sim = None
-    if wanted & NEEDS_SIM:
-        print(f"simulating {cfg.n_iter:,} iterations ...")
-        sim = simulate(inp, cfg, rng)
-        print(f" median duration {np.median(sim.duration):.0f} mo, "
-              f"P95 {np.percentile(sim.duration, 95):.0f} mo")
-        print(" P(active): " + " ".join(
-            f"{l}={v:.2f}" for l, v in zip(sim.fy_labels, sim.p_active)))
-        print()
-
-    print("figures:")
-    if "f01" in wanted:
-        fig01_curve_fan(inp, cfg, out)
-    if "f02" in wanted:
-        fig02_beta_atlas(inp, cfg, out)
-    if "f03" in wanted:
-        fig03_scatter_ellipse(inp, cfg, out)
-    if "f04" in wanted:
-        fig04_coupling(inp, cfg, out, sim)
-    if "f05" in wanted:
-        fig05_mixture(inp, cfg, out, sim)
-    if "f06" in wanted:
-        fig06_quantile_bars(inp, cfg, out, sim)
-    if "f07" in wanted:
-        fig07_conditional(inp, cfg, out, sim)
-    if "f08" in wanted:
-        fig08_fan_annotated(inp, cfg, out, sim)
-    if "f09" in wanted:
-        fig09_per_formula(inp, cfg, out)
-
-    print(f"\ndone -> {out.resolve()}")
-    if inp.illustrative:
-        print("REMINDER: these figures are watermarked ILLUSTRATIVE.")
+    generate_figures(inp, cfg, Path(args.out), rng=rng,
+                     only=set(args.only) if args.only else None)
 
 
 if __name__ == "__main__":
