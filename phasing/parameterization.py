@@ -74,6 +74,10 @@ def jacobian_ab_to_mu_nu(alpha, beta):
     """
     alpha = np.asarray(alpha, dtype=float)
     beta = np.asarray(beta, dtype=float)
+    if not (np.all(np.isfinite(alpha)) and np.all(np.isfinite(beta))):
+        raise ValueError("jacobian_ab_to_mu_nu: alpha, beta must be finite")
+    if np.any(alpha <= 0) or np.any(beta <= 0):
+        raise ValueError("jacobian_ab_to_mu_nu: alpha, beta must be > 0")
     s = alpha + beta
     dmu_da = beta / s**2
     dmu_db = -alpha / s**2
@@ -100,6 +104,9 @@ def delta_method_cov(cov_ab, alpha, beta):
     """
     cov_ab = np.asarray(cov_ab, dtype=float)
     J = jacobian_ab_to_mu_nu(alpha, beta)
-    if cov_ab.ndim == 2:
+    if J.ndim == 2 and cov_ab.ndim == 2:
         return J @ cov_ab @ J.T
+    # Batched case (either J or cov_ab has leading batch dims): a plain
+    # `.T` would reverse ALL axes, not just the last two, so use einsum's
+    # broadcasting "..." instead of an explicit transpose.
     return np.einsum("...ij,...jk,...lk->...il", J, cov_ab, J)

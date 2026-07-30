@@ -41,6 +41,9 @@ def main():
                     "the estimator-vs-population correlation decomposition, "
                     "and writes 06_munu_scatter.png.")
     args = ap.parse_args()
+    if args.model == "bvn_munu" and args.param not in ("munu", "both"):
+        ap.error("--model bvn_munu requires --param munu or --param both "
+                 "(the bvn_munu distribution is only fit in those modes)")
 
     np.random.seed(config.RNG_SEED)
     config.OUTPUT_DIR.mkdir(exist_ok=True)

@@ -164,6 +164,31 @@ def test_jacobian_batched_shape():
         assert np.allclose(J[i], jacobian_ab_to_mu_nu(alpha[i], beta[i]))
 
 
+def test_jacobian_rejects_invalid_domain():
+    with pytest.raises(ValueError):
+        jacobian_ab_to_mu_nu(0.0, 1.0)
+    with pytest.raises(ValueError):
+        jacobian_ab_to_mu_nu(-1.0, 1.0)
+    with pytest.raises(ValueError):
+        jacobian_ab_to_mu_nu(np.nan, 1.0)
+
+
+def test_delta_method_cov_batched_alpha_beta_with_shared_cov_ab():
+    """Regression test: batched alpha/beta (J is (n,2,2)) sharing a single
+    2x2 cov_ab must NOT use a bare `.T`, which would reverse every axis
+    instead of just the last two."""
+    alpha = np.array([1.0, 2.0, 3.0])
+    beta = np.array([4.0, 5.0, 6.0])
+    cov_ab = np.array([[1.3, 0.4], [0.4, 0.9]])
+
+    result = delta_method_cov(cov_ab, alpha, beta)
+    assert result.shape == (3, 2, 2)
+    for i in range(3):
+        J_i = jacobian_ab_to_mu_nu(alpha[i], beta[i])
+        expected = J_i @ cov_ab @ J_i.T
+        assert np.allclose(result[i], expected)
+
+
 # ============================================================================
 # 5. Parameterization invariance: (alpha,beta) fit vs (mu,nu) fit
 # ============================================================================
@@ -340,6 +365,19 @@ def test_load_and_validate_incremental_format(tmp_path, monkeypatch):
     assert fitted["alpha"].mean() == pytest.approx(4.5, rel=0.25)
     assert fitted["beta"].mean() == pytest.approx(4.5, rel=0.25)
     assert (fitted["r2"] > 0.99).all()
+
+
+# ============================================================================
+# CLI: --model bvn_munu without --param munu/both must fail cleanly
+# ============================================================================
+
+def test_cli_rejects_bvn_munu_model_without_munu_param(monkeypatch):
+    from phasing.pipeline import main as pipeline_main
+
+    monkeypatch.setattr("sys.argv", ["phasing_analysis.py", "--model", "bvn_munu"])
+    with pytest.raises(SystemExit) as exc_info:
+        pipeline_main()
+    assert exc_info.value.code == 2  # argparse.error() exit code, not a KeyError
 
 
 if __name__ == "__main__":

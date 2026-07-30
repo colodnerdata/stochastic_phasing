@@ -100,8 +100,11 @@ def write_summary(fits: pd.DataFrame, fits_for_stage2: pd.DataFrame,
     if decomp is not None and not decomp.empty:
         w("")
         w("CORRELATION DECOMPOSITION (estimator-induced vs population):")
-        w("  observed_r = population_r + estimator_r component (method of")
-        w("  moments: population_cov_hat = observed_cov - mean(per-curve pcov)).")
+        w("  observed_cov = population_cov + mean(per-curve estimator cov)")
+        w("  (method of moments: population_cov_hat = observed_cov -")
+        w("  mean(per-curve pcov)). observed_r/estimator_r/population_r below")
+        w("  are each computed FROM their own covariance matrix -- unlike the")
+        w("  covariances, the correlations themselves are not additive.")
         w("  Beta Fisher information has a strictly negative off-diagonal, so")
         w("  Cov(alpha_hat, beta_hat) > 0 is manufactured by the estimator on")
         w("  top of any true population correlation.")
