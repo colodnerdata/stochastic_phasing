@@ -363,7 +363,10 @@ def _ellipse_coverage(x: np.ndarray, y: np.ndarray, q: float = 0.95) -> float | 
     d = np.column_stack([x, y])
     mean, cov = d.mean(axis=0), np.cov(d.T)
     diff = d - mean
-    m2 = np.einsum("ij,jk,ik->i", diff, np.linalg.inv(cov), diff)
+    # pinv, not inv: near-singular cov (collinear or very tight clusters)
+    # would otherwise raise LinAlgError -- conf_ellipse sidesteps the same
+    # issue via eigh, this mirrors that robustness.
+    m2 = np.einsum("ij,jk,ik->i", diff, np.linalg.pinv(cov), diff)
     return float(np.mean(m2 <= chi2.ppf(q, df=2)))
 
 
@@ -432,7 +435,7 @@ def fig02_beta_atlas(inp: Inputs, cfg: SimConfig, out: Path) -> None:
         ax.set_xticks([0, .5, 1])
         ax.set_xticklabels([])
         ax.set_ylim(0, max(2.6, pdf.max() * 1.22))
-        ax.set_yticklabels([])
+        ax.tick_params(labelleft=False)
         if k == 0:
             ax.set_ylabel("spend rate\nf(t)", fontsize=9.5, color=DEEP, linespacing=1.4)
 
