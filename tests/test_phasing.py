@@ -414,5 +414,80 @@ def test_cli_data_flag_targets_alternate_dataset(tmp_path, monkeypatch):
     assert set(fits["project"]) == {f"CUSTOM-{i}" for i in range(6)}
 
 
+# ============================================================================
+# Presentation figures: build_inputs + pipeline --presentation integration
+# ============================================================================
+
+def test_build_inputs_prefers_bvn_log_and_falls_back_to_fits():
+    from phasing import presentation_figures as pres
+
+    fits = pd.DataFrame({
+        "project": ["P0", "P1", "P2", "P3", "P4"],
+        "cost_type": ["TPC", "TPC", "TPC", "OPC", "OPC"],
+        "alpha": [2.0, 2.4, 1.8, 3.0, 2.0],
+        "beta": [1.9, 2.1, 2.2, 2.5, 3.5],
+    })
+    mu = [0.7, 0.6]
+    cov = [[0.04, 0.01], [0.01, 0.09]]
+    dists = {"bvn_log": [dict(cost_type="TPC", mu=mu, cov=cov)],
+             # bvn_munu is in (logit mu, log nu) space and must NOT be used
+             # as a log-space (alpha, beta) population
+             "bvn_munu": [dict(cost_type="OPC", mu=[0.0, 2.0],
+                               cov=[[1.0, 0.0], [0.0, 1.0]])]}
+
+    inp = pres.build_inputs(fits, dists, "TPC")
+    assert inp.illustrative is False
+    assert inp.cost_type == "TPC"
+    assert len(inp.alpha) == 3
+    assert np.allclose(inp.mu_ln, mu)
+    assert np.allclose(inp.cov_ln, cov)
+
+    # No bvn_log entry for OPC -> population estimated from the fitted curves,
+    # never from the differently-parameterized bvn_munu entry.
+    inp_opc = pres.build_inputs(fits, dists, "OPC")
+    assert np.allclose(inp_opc.mu_ln,
+                       [np.mean([np.log(3.0), np.log(2.0)]),
+                        np.mean([np.log(2.5), np.log(3.5)])])
+    assert any("estimated from fitted curves" in n for n in inp_opc.notes)
+
+    with pytest.raises(SystemExit):
+        pres.build_inputs(fits, dists, "TEC")
+
+
+def test_cli_presentation_flag_writes_figures(tmp_path, monkeypatch):
+    """--presentation on a --data run must render all nine deck figures from
+    that run's in-memory fits into OUTPUT_DIR/presentation/."""
+    from phasing.pipeline import main as pipeline_main
+
+    monkeypatch.setattr(config, "DATA_PATH", config.DATA_PATH)
+
+    csv_path = tmp_path / "custom_data.csv"
+    rng = np.random.default_rng(42)
+    rows = []
+    for i in range(6):
+        a, b = mu_nu_to_ab(0.5, 8.0)
+        t = np.sort(rng.uniform(0.02, 0.98, 10))
+        y = beta_cdf(t, a, b)
+        for tt, yy in zip(t, y):
+            rows.append(dict(project=f"CUSTOM-{i}", cost_type="TPC",
+                              cum_pct_schedule=float(tt), cum_pct_cost=float(yy)))
+    pd.DataFrame(rows).to_csv(csv_path, index=False)
+
+    monkeypatch.setattr("sys.argv", [
+        "phasing_analysis.py", "--data", str(csv_path),
+        "--presentation", "--pres-n-iter", "500",
+    ])
+    pipeline_main()
+
+    pres_dir = config.OUTPUT_DIR / "presentation"
+    expected = [
+        "f01_curve_fan.png", "f02_beta_atlas.png", "f03_scatter_ellipse.png",
+        "f04_coupling.png", "f05_mixture.png", "f06_quantile_bars.png",
+        "f07_conditional.png", "f08_fan_annotated.png", "f09_per_formula.png",
+    ]
+    for name in expected:
+        assert (pres_dir / name).exists(), f"missing {name}"
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))
